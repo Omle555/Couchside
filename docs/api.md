@@ -13,6 +13,11 @@ Sessions expire after 30 days without use. Endpoints marked **admin** need an ad
 With `[server] lan_only = true` (the default), every request (API and web UI) from an address outside
 the local network gets `403` with `{ "error": "outside_local_network", ... }`.
 
+While Solidfin is starting (opening the database, finding FFmpeg), the web UI files are already
+served and every API call gets `503` with
+`{ "error": "starting", "message": "Opening the database", "step": 0, "steps": 4 }` (`step` counts
+from 0). If start-up fails, `error` is `"start_failed"` for a few seconds before Solidfin exits.
+
 ## Setup & auth
 
 | Method | Path | Auth | Description |
@@ -31,7 +36,7 @@ the local network gets `403` with `{ "error": "outside_local_network", ... }`.
 | GET | `/libraries` | user | List libraries |
 | POST | `/libraries` | admin | `{ name, kind: "movies" \| "shows", path }`; starts a scan |
 | DELETE | `/libraries/{id}` | admin | Forget a library (files untouched) |
-| GET | `/scan` | user | `{ running, phase, last_started, last_finished, errors[] }` |
+| GET | `/scan` | user | `{ running, phase, last_started, last_finished, errors[], step, steps }`; `step` of `steps` are done in the current run (one per library, then media info and metadata; `steps` is 0 until known) |
 | POST | `/scan` | admin | Start a full scan → `{ started }` |
 | POST | `/metadata/refresh` | admin | Re-fetch all TMDB metadata |
 | GET | `/settings/metadata` | admin | `{ has_key, key_source: "app"\|"config"\|null, key_hint, language }` |

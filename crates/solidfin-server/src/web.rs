@@ -1,6 +1,5 @@
 //! The web UI, compiled into the executable so Solidfin is a single file.
 
-use crate::app::AppState;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -18,8 +17,8 @@ fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
     )
 }
 
-/// Routes for the static UI files.
-pub fn router() -> Router<AppState> {
+/// Routes for the static UI files (they need no state, so any router can use them).
+pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route(
             "/",

@@ -4,6 +4,15 @@ A lightweight, self-hosted movie and TV server for Windows, written in Rust.
 Point it at your movie and TV folders and watch them in any web browser on your PC or home network,
 much like Jellyfin or Plex but much smaller: Solidfin is a single `solidfin.exe`.
 
+## What's new
+
+**2026-10-14**
+- Start-up splash screen: the Solidfin logo with a progress bar that follows the real start-up
+  steps, then a fade into the app. It appears as soon as `solidfin.exe` starts (while the database,
+  FFmpeg check and settings load) and says so if start-up fails.
+- Thin progress bar along the top of every page while a library scan runs; `GET /scan` now
+  reports `step` and `steps`.
+
 ## Features (v0.1)
 
 - **Libraries** of movies and TV shows on local drives, USB drives or network shares (`\\NAS\Video`)

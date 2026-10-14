@@ -1,8 +1,9 @@
 //! Server startup and shutdown.
 
+use crate::boot::{BootProgress, BootStep};
 use crate::manager::LibraryManager;
 use crate::title_scan::TitleScanner;
-use crate::{api, lan, logging};
+use crate::{api, boot, lan, logging};
 use anyhow::Context;
 use solidfin_core::config::default_config_path;
 use solidfin_core::Config;
@@ -15,9 +16,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 /// How long open streams get to finish after a shutdown request.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long the start-up page's connections get to finish before the app takes over.
+const HANDOVER_GRACE: Duration = Duration::from_secs(2);
+/// How long the start-up page keeps saying start-up failed before Solidfin exits.
+const FAILED_PAGE_TIME: Duration = Duration::from_secs(3);
 
 /// Shared state handed to every request handler.
 #[derive(Clone)]
@@ -139,36 +146,6 @@ pub async fn run(
         "starting Solidfin"
     );
 
-    let db = Db::open(&data_dir.join("solidfin.db"))
-        .await
-        .context("could not open the database")?;
-
-    let ffprobe = Ffprobe::locate(config.ffmpeg.ffprobe_path.as_deref()).await;
-    let ffmpeg = Ffmpeg::locate(ffmpeg_candidates(&config, ffprobe.as_ref())).await;
-    let (key, language) = effective_metadata_settings(&db, &config).await?;
-    let tmdb = match key {
-        Some((key, _)) => Some(Tmdb::new(&key, &language, image_dir.clone())?),
-        None => {
-            tracing::info!(
-                "no TMDB key configured; using file names only (add one under Settings → Metadata)"
-            );
-            None
-        }
-    };
-
-    let manager = LibraryManager::new(db.clone(), ffprobe, tmdb);
-    manager.spawn_schedule(config.scan.interval_minutes, config.scan.scan_on_startup);
-
-    let state = AppState {
-        db: db.clone(),
-        manager,
-        image_dir: Arc::new(image_dir),
-        setup_lock: Arc::new(tokio::sync::Mutex::new(())),
-        config: Arc::new(config.clone()),
-        title_scanner: Arc::new(TitleScanner::new(ffmpeg)),
-    };
-    let router = api::router(state);
-
     let bind: IpAddr = config.server.bind.trim().parse().with_context(|| {
         format!(
             "invalid [server] bind address {:?} in config.toml (use 127.0.0.1 or 0.0.0.0)",
@@ -176,15 +153,39 @@ pub async fn run(
         )
     })?;
     let addr = SocketAddr::new(bind, config.server.port);
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
+    let socket = std::net::TcpListener::bind(addr)
         .with_context(|| format!("could not listen on {addr} (is Solidfin already running?)"))?;
+    socket
+        .set_nonblocking(true)
+        .context("could not set up the network listener")?;
     let browse_host = if bind.is_unspecified() {
         "localhost".to_string()
     } else {
         lan::url_host(bind)
     };
     let url = format!("http://{browse_host}:{}", config.server.port);
+
+    // Serve the splash screen right away so the browser can show start-up progress.
+    let progress = BootProgress::default();
+    let startup_page = StartupPage::serve(&socket, progress.clone(), config.server.lan_only)?;
+    if console && open_browser {
+        open_in_browser(&url);
+    }
+    let state = match start_services(&config, image_dir, &progress).await {
+        Ok(state) => state,
+        Err(err) => {
+            progress.fail();
+            tokio::time::sleep(FAILED_PAGE_TIME).await;
+            startup_page.stop().await;
+            return Err(err);
+        }
+    };
+    startup_page.stop().await;
+    let db = state.db.clone();
+    let router = api::router(state);
+    let listener = tokio::net::TcpListener::from_std(socket)
+        .context("could not set up the network listener")?;
+
     let network_urls = lan::network_urls(bind, config.server.port).await;
     tracing::info!(%url, "Solidfin is running");
     for network_url in &network_urls {
@@ -196,9 +197,6 @@ pub async fn run(
             println!("  On other devices on your network: {network_url}");
         }
         println!("  Press Ctrl+C to stop.\n");
-        if open_browser {
-            open_in_browser(&url);
-        }
     }
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
@@ -228,6 +226,92 @@ pub async fn run(
     db.close().await;
     tracing::info!("stopped");
     Ok(())
+}
+
+/// Opens the database, finds the tools and starts the library worker,
+/// reporting each step to the start-up page.
+async fn start_services(
+    config: &Config,
+    image_dir: PathBuf,
+    progress: &BootProgress,
+) -> anyhow::Result<AppState> {
+    progress.begin(BootStep::Database);
+    let db = Db::open(&config.data_dir().join("solidfin.db"))
+        .await
+        .context("could not open the database")?;
+
+    progress.begin(BootStep::Tools);
+    let ffprobe = Ffprobe::locate(config.ffmpeg.ffprobe_path.as_deref()).await;
+    let ffmpeg = Ffmpeg::locate(ffmpeg_candidates(config, ffprobe.as_ref())).await;
+
+    progress.begin(BootStep::Settings);
+    let (key, language) = effective_metadata_settings(&db, config).await?;
+    let tmdb = match key {
+        Some((key, _)) => Some(Tmdb::new(&key, &language, image_dir.clone())?),
+        None => {
+            tracing::info!(
+                "no TMDB key configured; using file names only (add one under Settings → Metadata)"
+            );
+            None
+        }
+    };
+
+    progress.begin(BootStep::Library);
+    let manager = LibraryManager::new(db.clone(), ffprobe, tmdb);
+    manager.spawn_schedule(config.scan.interval_minutes, config.scan.scan_on_startup);
+
+    Ok(AppState {
+        db,
+        manager,
+        image_dir: Arc::new(image_dir),
+        setup_lock: Arc::new(tokio::sync::Mutex::new(())),
+        config: Arc::new(config.clone()),
+        title_scanner: Arc::new(TitleScanner::new(ffmpeg)),
+    })
+}
+
+/// The start-up page, served on a copy of the listening socket until the app is ready.
+struct StartupPage {
+    stop: watch::Sender<bool>,
+    task: JoinHandle<std::io::Result<()>>,
+}
+
+impl StartupPage {
+    fn serve(
+        socket: &std::net::TcpListener,
+        progress: BootProgress,
+        lan_only: bool,
+    ) -> anyhow::Result<Self> {
+        let socket = socket
+            .try_clone()
+            .and_then(tokio::net::TcpListener::from_std)
+            .context("could not set up the network listener")?;
+        let (stop, mut stop_rx) = watch::channel(false);
+        let app =
+            boot::router(progress, lan_only).into_make_service_with_connect_info::<SocketAddr>();
+        let server = axum::serve(socket, app).with_graceful_shutdown(async move {
+            let _ = stop_rx.wait_for(|stop| *stop).await;
+        });
+        Ok(Self {
+            stop,
+            task: tokio::spawn(server.into_future()),
+        })
+    }
+
+    /// Stops the start-up page so the app can take over the port.
+    async fn stop(self) {
+        let _ = self.stop.send(true);
+        let abort = self.task.abort_handle();
+        match tokio::time::timeout(HANDOVER_GRACE, self.task).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(err))) => tracing::warn!(error = %err, "start-up page stopped with an error"),
+            Ok(Err(err)) => tracing::warn!(error = %err, "start-up page task failed"),
+            Err(_) => {
+                abort.abort();
+                tracing::debug!("closed slow start-up page connections");
+            }
+        }
+    }
 }
 
 /// Opens the default browser (best effort; Windows only).

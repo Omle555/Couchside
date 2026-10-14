@@ -28,6 +28,10 @@ pub struct ScanStatus {
     pub last_finished: Option<i64>,
     /// Problems from the last run, if any.
     pub errors: Vec<String>,
+    /// Steps finished in the current run (one per library, then media info and metadata).
+    pub step: u32,
+    /// Steps in the current run; 0 until the libraries have been listed.
+    pub steps: u32,
 }
 
 /// Errors from metadata work. In the background run they stop the metadata
@@ -213,6 +217,8 @@ impl LibraryManager {
             s.phase = "Scanning libraries".into();
             s.last_started = Some(now_unix());
             s.errors.clear();
+            s.step = 0;
+            s.steps = 0;
         });
 
         self.scan_all().await;
@@ -222,6 +228,7 @@ impl LibraryManager {
             if let Err(err) = self.probe_pending().await {
                 self.record_error(format!("media info: {err}"));
             }
+            self.update_status(|s| s.step += 1);
         }
 
         if let Some(tmdb) = self.tmdb() {
@@ -229,6 +236,7 @@ impl LibraryManager {
             if let Err(err) = self.fetch_metadata(&tmdb).await {
                 self.record_error(format!("metadata: {err}"));
             }
+            self.update_status(|s| s.step += 1);
         }
 
         self.update_status(|s| {
@@ -246,11 +254,15 @@ impl LibraryManager {
                 return;
             }
         };
+        let later_steps = u32::from(self.ffprobe.is_some()) + u32::from(self.tmdb().is_some());
+        let library_steps = u32::try_from(libraries.len()).unwrap_or(u32::MAX);
+        self.update_status(|s| s.steps = library_steps.saturating_add(later_steps));
         for library in libraries {
             self.update_status(|s| s.phase = format!("Scanning {}", library.name));
             if let Err(err) = scan_library(&self.db, &library).await {
                 self.record_error(format!("{}: {err}", library.name));
             }
+            self.update_status(|s| s.step += 1);
         }
     }
 

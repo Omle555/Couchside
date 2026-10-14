@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Start-up splash screen in the web UI: the Solidfin logo, a thin progress bar that follows
+  the real start-up steps (connecting, signing in, loading the first page) and a short status
+  line, then a fade into the app. If the server is still starting it waits and retries instead
+  of showing an error. No extra files or libraries; honours "reduce motion"
+- The splash now opens as soon as `solidfin.exe` starts: the port opens first and the splash
+  shows each start-up step (opening the database, looking for FFmpeg, loading settings,
+  starting the library) before the app takes over. If start-up fails, the page says so
+- Thin progress bar along the top of every page while a library scan runs; `GET /scan` now
+  reports `step` and `steps`
 - Movies are matched to TMDB by scoring every search result on title similarity, year (±1) and
   popularity; weak matches are rejected instead of guessed
 - Full movie details: tagline, genres, rating, release date, age rating (for your region),

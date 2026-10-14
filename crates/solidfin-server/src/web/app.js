@@ -12,7 +12,7 @@ let cleanup = null;     // called before leaving the current page
 // ---------- Helpers ----------
 
 class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, data) { super(message); this.status = status; this.data = data; }
 }
 
 async function api(path, { method = 'GET', body } = {}) {
@@ -30,7 +30,7 @@ async function api(path, { method = 'GET', body } = {}) {
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError((data && data.message) || res.statusText, res.status);
+  if (!res.ok) throw new ApiError((data && data.message) || res.statusText, res.status, data);
   return data;
 }
 
@@ -140,6 +140,93 @@ function setActiveNav(name) {
 function showError(err) {
   if (err instanceof ApiError && err.status === 401) return;
   app.innerHTML = `<div class="empty"><h2>Something went wrong</h2><p>${esc(err.message)}</p></div>`;
+}
+
+// ---------- Splash and scan progress ----------
+
+function setBarFraction(el, fraction) {
+  const scale = `scaleX(${Math.max(0, Math.min(1, fraction))})`;
+  el.style.webkitTransform = scale;
+  el.style.transform = scale;
+}
+
+// The start-up screen from index.html. `fraction` is how much of start-up is done,
+// or null when that isn't known (the bar then just moves).
+const splash = {
+  el: document.getElementById('splash'),
+  set(fraction, text) {
+    if (!this.el) return;
+    const known = typeof fraction === 'number';
+    this.el.classList.toggle('indeterminate', !known);
+    if (known) {
+      setBarFraction(document.getElementById('splash-bar'), fraction);
+      this.el.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+    } else {
+      this.el.removeAttribute('aria-valuenow');
+    }
+    if (text) document.getElementById('splash-status').textContent = text;
+  },
+  finish() {
+    if (!this.el) return;
+    this.set(1, 'Ready');
+    const el = this.el;
+    this.el = null;
+    el.classList.add('done');
+    setTimeout(() => { el.remove(); }, 400);
+  },
+};
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// GET /setup, retried while the server is still starting or restarting.
+// While it starts, the server answers 503 with the step it is on.
+async function loadServerInfo() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await api('/setup');
+    } catch (err) {
+      const boot = err instanceof ApiError ? err.data : null;
+      if (boot && boot.error === 'start_failed') throw err;
+      if (boot && boot.error === 'starting') {
+        attempt = 0;
+        splash.set(0.05 + 0.35 * (boot.step / boot.steps), `${boot.message}…`);
+        await sleep(250);
+        continue;
+      }
+      if (err instanceof ApiError && err.status < 500) throw err;
+      splash.set(null, attempt < 10
+        ? 'Waiting for the Solidfin server to start…'
+        : 'Still waiting for the server. Check that the Solidfin service is running.');
+      await sleep(Math.min(attempt, 5) * 1000);
+    }
+  }
+}
+
+// Shows a thin bar along the top of the page while a library scan runs.
+let scanTimer = null;
+function watchScan() {
+  if (scanTimer || !me) return;
+  const bar = document.getElementById('scanbar');
+  const poll = async () => {
+    let s = null;
+    try { s = await api('/scan'); } catch (_) { /* signed out or offline: stop until the next page */ }
+    if (!s || !s.running) {
+      bar.hidden = true;
+      scanTimer = null;
+      return;
+    }
+    const known = s.steps > 0;
+    bar.classList.toggle('indeterminate', !known);
+    if (known) {
+      const fraction = Math.min(1, s.step / s.steps);
+      setBarFraction(bar.querySelector('.scanbar-fill'), Math.max(fraction, 0.02));
+      bar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+    }
+    bar.title = known ? `${s.phase} (step ${Math.min(s.step + 1, s.steps)} of ${s.steps})` : s.phase;
+    bar.hidden = false;
+    scanTimer = setTimeout(poll, 3000);
+  };
+  scanTimer = setTimeout(poll, 0);
 }
 
 // ---------- Auth screens ----------
@@ -1006,6 +1093,7 @@ async function renderUsers() {
 
 async function renderScanStatus() {
   const s = await api('/scan');
+  if (s.running) watchScan();
   const el = app.querySelector('#scan-status');
   if (!el) return;
   el.innerHTML = `<span class="dot ${s.running ? 'on' : ''}"></span>
@@ -1043,12 +1131,18 @@ async function route() {
   const params = new URLSearchParams(query || '');
 
   try {
-    if (!serverInfo) serverInfo = await api('/setup');
-    if (serverInfo.needs_setup) { setupPage(); return; }
-    if (path === '/login') { loginPage(); return; }
-    if (!me) me = await api('/auth/me');
+    if (!serverInfo) {
+      splash.set(0.05, 'Connecting…');
+      serverInfo = await loadServerInfo();
+    }
+    if (serverInfo.needs_setup) { setupPage(); splash.finish(); return; }
+    if (path === '/login') { loginPage(); splash.finish(); return; }
+    if (!me) {
+      splash.set(0.5, 'Signing in…');
+      me = await api('/auth/me');
+    }
   } catch (err) {
-    if (err.status !== 401) showError(err);
+    if (err.status !== 401) { showError(err); splash.finish(); }
     return;
   }
 
@@ -1058,11 +1152,15 @@ async function route() {
     const m = path.match(re);
     if (m) {
       app.innerHTML = '<div class="loading">Loading…</div>';
+      splash.set(0.75, 'Loading your library…');
       try { await handler(m, params); } catch (err) { showError(err); }
+      splash.finish();
+      watchScan();
       return;
     }
   }
   app.innerHTML = '<div class="empty"><h2>Page not found</h2><p><a class="btn" href="#/">Go home</a></p></div>';
+  splash.finish();
 }
 
 document.getElementById('search-form').addEventListener('submit', e => {

@@ -47,6 +47,16 @@ button, input, select { font: inherit; color: inherit; }
 .search input:focus { border-color: var(--accent); }
 .user { display: flex; align-items: center; gap: 8px; }
 
+/* ---------- Scan progress (thin bar along the top while a library scan runs) ---------- */
+.scanbar { position: fixed; top: 0; left: 0; right: 0; z-index: 11; height: 2px; background: rgba(124, 156, 255, .15); }
+.scanbar-fill {
+  height: 100%; width: 100%; background: var(--accent);
+  -webkit-transform-origin: 0 50%; transform-origin: 0 50%;
+  -webkit-transform: scaleX(0); transform: scaleX(0);
+  -webkit-transition: -webkit-transform .6s ease; transition: transform .6s ease;
+}
+.scanbar.indeterminate .scanbar-fill { -webkit-transform: none; transform: none; opacity: .6; }
+
 /* ---------- Layout ---------- */
 .app { padding: 24px 28px 64px; max-width: 1680px; margin: 0 auto; }
 .loading, .empty { color: var(--muted); padding: 48px 0; text-align: center; }
@@ -257,4 +267,8 @@ button.link.inline { padding: 0; color: var(--accent); font-size: inherit; }
   .hero h1 { font-size: 26px; }
   .form-row, .form-row.users { grid-template-columns: 1fr; }
   .episode .thumb { width: 120px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scanbar-fill { -webkit-transition: none; transition: none; }
 }
