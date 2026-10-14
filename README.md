@@ -7,6 +7,9 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 ## What's new
 
 **2026-10-14**
+- Transcoding is planned: [docs/transcoding-plan.md](docs/transcoding-plan.md) covers how Couchside
+  will convert files your browser or TV can't play (audio-only conversion first, then full video
+  conversion on the NVIDIA GPU), in four phases. Nothing has changed in the app yet.
 - The project has a new name: **Solidfin is now Couchside**. The program is now `couchside.exe`,
   the Windows service is "Couchside" and data lives in `%ProgramData%\Couchside`. On first start
   the old `%ProgramData%\Solidfin` folder (database, artwork, settings, logs) is moved over
