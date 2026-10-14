@@ -1,0 +1,51 @@
+# Solidfin configuration (example with every setting and its default).
+# The real file lives at C:\ProgramData\Solidfin\config.toml and is created on first run.
+# Restart Solidfin after editing. Use 'single quotes' for Windows paths.
+
+[server]
+# 127.0.0.1 = only this PC can connect. 0.0.0.0 = other devices on your network too.
+bind = "127.0.0.1"
+port = 8096
+# true = only devices on your home network can connect: private addresses (10.x, 172.16-31.x,
+# 192.168.x, 169.254.x, IPv6 fc00::/7 and fe80::/10) and this PC. Everyone else gets "403 Forbidden".
+# false = accept any address that can reach the port (not recommended).
+lan_only = true
+
+[paths]
+# Where the database, image cache and logs are stored.
+# Default: C:\ProgramData\Solidfin
+# data_dir = 'D:\SolidfinData'
+
+[ffmpeg]
+# Full path to ffprobe.exe. Default: next to solidfin.exe, then ffmpeg\bin\ next to it, then PATH.
+# ffprobe_path = 'C:\ffmpeg\bin\ffprobe.exe'
+# Full path to ffmpeg.exe, used by "Scan video for title" in Identify.
+# Default: next to ffprobe.exe, next to solidfin.exe, then ffmpeg\bin\ next to it, then PATH.
+# ffmpeg_path = 'C:\ffmpeg\bin\ffmpeg.exe'
+
+[metadata]
+# TMDB API key (v3) or Read Access Token (v4) from https://www.themoviedb.org/settings/api
+# Leave unset to use file names only.
+# tmdb_api_key = "your-key-here"
+# Language for titles and descriptions, e.g. en-US, en-AU, en-GB, fr-FR, de-DE.
+language = "en-US"
+
+[scan]
+# Minutes between automatic rescans (0 = only scan on startup or when asked).
+interval_minutes = 60
+# Scan all libraries when Solidfin starts.
+scan_on_startup = true
+
+[library]
+# true = the "Clean up" button on a movie's page can also rename the movie file, plus the
+# subtitles, .nfo and artwork named after it, to the standard layout:
+#   Movie Title (Year)\Movie Title (Year) 1080p.mkv
+# It also moves the images and subtitles in the movie's folder (only the movie's own ones if
+# other movies share the folder; never a video) to the "removed" folder in the data folder.
+# A movie in its own folder keeps that folder (renamed); otherwise a new folder is made next
+# to it. You always see the old and new names before anything changes, nothing is ever
+# overwritten, and watch progress is kept. Every rename is listed in logs\renames.log
+# (inside the data folder) so it can be undone by hand.
+# false = Solidfin never renames, moves or changes your files.
+# The "Allow file renames" switch in Settings → Libraries overrides this once it has been used.
+allow_file_renames = false

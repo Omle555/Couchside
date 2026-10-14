@@ -1,0 +1,48 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# Runtime data (database, image cache, logs, recycled files)
+/data
+/removed
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db.bak-*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.log
+/logs
+build-log.txt
+
+# Real config holds the TMDB key; config.example.toml stays tracked
+config.toml
+!config.example.toml
+.env
+.env.*
+
+# Bundled tools and media (never commit)
+ffmpeg/
+ffprobe.exe
+ffmpeg.exe
+*.mkv
+*.mp4
+*.avi
+*.m4v
+*.mov
+*.ts
+
+# Editor and OS files
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store

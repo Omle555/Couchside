@@ -1,0 +1,1081 @@
+// Solidfin web UI. Plain JavaScript, no build step.
+'use strict';
+
+const app = document.getElementById('app');
+const topbar = document.getElementById('topbar');
+const PAGE_SIZE = 120;
+
+let me = null;          // signed-in user
+let serverInfo = null;  // { needs_setup, version, ffprobe, ffmpeg, tmdb }
+let cleanup = null;     // called before leaving the current page
+
+// ---------- Helpers ----------
+
+class ApiError extends Error {
+  constructor(message, status) { super(message); this.status = status; }
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch('/api/v1' + path, {
+    method,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401 && path !== '/auth/login') {
+    me = null;
+    if (!location.hash.startsWith('#/login')) location.hash = '#/login';
+    throw new ApiError('Please sign in.', 401);
+  }
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError((data && data.message) || res.statusText, res.status);
+  return data;
+}
+
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toast(message) {
+  const el = document.getElementById('toast');
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+function fmtRuntime(seconds) {
+  if (!seconds) return '';
+  const m = Math.round(seconds / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
+
+function fmtSize(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0; let n = bytes;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i >= 3 ? 2 : 0)} ${units[i]}`;
+}
+
+function fmtDate(unix) {
+  return unix ? new Date(unix * 1000).toLocaleString() : 'never';
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function epCode(item) {
+  if (item.season == null || item.episode == null) return '';
+  let code = `S${pad(item.season)}E${pad(item.episode)}`;
+  if (item.episode_end) code += `-E${pad(item.episode_end)}`;
+  return code;
+}
+
+function resolution(item) {
+  if (!item.height) return '';
+  if (item.height >= 2000) return '4K';
+  if (item.height >= 1000) return '1080p';
+  if (item.height >= 700) return '720p';
+  return `${item.height}p`;
+}
+
+function progressPercent(item) {
+  const p = item.progress;
+  if (!p || p.played || !item.runtime_seconds || !p.position_seconds) return 0;
+  return Math.min(100, (p.position_seconds / item.runtime_seconds) * 100);
+}
+
+// The TMDB id changes when a movie is re-identified, so it's added to artwork
+// URLs to make browsers fetch the new poster instead of showing a cached one.
+const itemImg = (item, kind) => `/api/v1/items/${item.id}/image/${kind}${item.tmdb_id ? '?v=' + item.tmdb_id : ''}`;
+const showImg = (id, kind) => `/api/v1/shows/${id}/image/${kind}`;
+
+function artHtml(src, hasImage, label) {
+  const placeholder = `<div class="placeholder">${esc(label)}</div>`;
+  if (!hasImage) return placeholder;
+  return `${placeholder}<img src="${src}" alt="" loading="lazy" onerror="this.remove()">`;
+}
+
+function overlays(item) {
+  const pct = progressPercent(item);
+  return (item.progress && item.progress.played ? '<span class="badge" title="Watched">✓</span>' : '') +
+    (pct > 0 ? `<div class="progress"><span style="width:${pct.toFixed(1)}%"></span></div>` : '');
+}
+
+function movieCard(item) {
+  return `<a class="card" href="#/item/${item.id}">
+    <div class="art">${artHtml(itemImg(item, 'poster'), item.has_poster, item.title)}${overlays(item)}</div>
+    <div class="title" title="${esc(item.title)}">${esc(item.title)}</div>
+    <div class="sub">${esc(item.year)}</div>
+  </a>`;
+}
+
+function episodeCard(item) {
+  const hasArt = item.has_backdrop;
+  const src = hasArt ? itemImg(item, 'backdrop') : itemImg(item, 'poster');
+  return `<a class="card wide" href="#/item/${item.id}">
+    <div class="art">${artHtml(src, hasArt || item.has_poster, item.title)}${overlays(item)}</div>
+    <div class="title" title="${esc(item.title)}">${esc(item.title)}</div>
+    <div class="sub">${esc(epCode(item))}</div>
+  </a>`;
+}
+
+function itemCard(item) {
+  return item.kind === 'episode' ? episodeCard(item) : movieCard(item);
+}
+
+function showCard(show) {
+  return `<a class="card" href="#/show/${show.id}">
+    <div class="art">${artHtml(showImg(show.id, 'poster'), show.has_poster, show.title)}</div>
+    <div class="title" title="${esc(show.title)}">${esc(show.title)}</div>
+    <div class="sub">${esc(show.year)}${show.year ? ' · ' : ''}${show.episode_count} episode${show.episode_count === 1 ? '' : 's'}</div>
+  </a>`;
+}
+
+function setActiveNav(name) {
+  document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === name));
+}
+
+function showError(err) {
+  if (err instanceof ApiError && err.status === 401) return;
+  app.innerHTML = `<div class="empty"><h2>Something went wrong</h2><p>${esc(err.message)}</p></div>`;
+}
+
+// ---------- Auth screens ----------
+
+function authPage({ title, intro, button, onSubmit, confirm }) {
+  topbar.hidden = true;
+  app.innerHTML = `<form class="auth" autocomplete="on">
+    <div class="logo"><img src="/favicon.svg" width="34" height="34" alt="">Solidfin</div>
+    <p>${esc(intro)}</p>
+    <div class="field"><label for="u">Username</label><input id="u" type="text" autocomplete="username" required></div>
+    <div class="field"><label for="p">Password</label><input id="p" type="password" autocomplete="${confirm ? 'new-password' : 'current-password'}" required></div>
+    ${confirm ? '<div class="field"><label for="p2">Confirm password</label><input id="p2" type="password" autocomplete="new-password" required></div>' : ''}
+    <div class="error" id="err"></div>
+    <button class="btn primary" type="submit">${esc(button)}</button>
+  </form>`;
+  const form = app.querySelector('form');
+  form.querySelector('#u').focus();
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const username = form.querySelector('#u').value;
+    const password = form.querySelector('#p').value;
+    const errEl = form.querySelector('#err');
+    if (confirm && password !== form.querySelector('#p2').value) {
+      errEl.textContent = 'Passwords do not match.';
+      return;
+    }
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    try {
+      const res = await onSubmit(username, password);
+      me = res.user;
+      location.hash = '#/';
+    } catch (err) {
+      errEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.title = `${title} · Solidfin`;
+}
+
+function loginPage() {
+  authPage({
+    title: 'Sign in', intro: 'Sign in to watch your movies and shows.', button: 'Sign in',
+    onSubmit: (username, password) => api('/auth/login', { method: 'POST', body: { username, password } }),
+  });
+}
+
+function setupPage() {
+  authPage({
+    title: 'Welcome', intro: 'Welcome! Create the administrator account for this server.', button: 'Create account', confirm: true,
+    onSubmit: async (username, password) => {
+      const res = await api('/setup', { method: 'POST', body: { username, password } });
+      serverInfo.needs_setup = false;
+      return res;
+    },
+  });
+}
+
+// ---------- Pages ----------
+
+async function homePage() {
+  setActiveNav('home');
+  document.title = 'Solidfin';
+  const home = await api('/home');
+  const sections = [];
+  if (home.continue_watching.length) {
+    sections.push(`<h2 class="row-title">Continue watching</h2><div class="row wide">${home.continue_watching.map(i => episodeCard(i)).join('')}</div>`);
+  }
+  if (home.recent_movies.length) {
+    sections.push(`<h2 class="row-title">Recently added movies</h2><div class="row">${home.recent_movies.map(movieCard).join('')}</div>`);
+  }
+  if (home.recent_episodes.length) {
+    sections.push(`<h2 class="row-title">Recently added episodes</h2><div class="row wide">${home.recent_episodes.map(episodeCard).join('')}</div>`);
+  }
+  if (!sections.length) {
+    const hint = me.is_admin
+      ? '<p>Add a folder of movies or TV shows to get started.</p><p><a class="btn primary" href="#/settings">Add a library</a></p>'
+      : '<p>Ask the server administrator to add some libraries.</p>';
+    app.innerHTML = `<div class="empty"><h2>Nothing here yet</h2>${hint}</div>`;
+    return;
+  }
+  app.innerHTML = sections.join('');
+}
+
+async function moviesPage(params) {
+  setActiveNav('movies');
+  document.title = 'Movies · Solidfin';
+  const sort = params.get('sort') || 'title';
+  app.innerHTML = `<div class="toolbar"><h1>Movies<span class="count" id="count"></span></h1>
+    <select id="sort" aria-label="Sort by">
+      <option value="title">A–Z</option><option value="added">Recently added</option><option value="year">Release year</option>
+    </select></div>
+    <div class="grid" id="grid"></div><div class="more" id="more"></div>`;
+  const select = app.querySelector('#sort');
+  select.value = sort;
+  select.addEventListener('change', () => { location.hash = `#/movies?sort=${select.value}`; });
+  await pagedGrid(offset => api(`/movies?sort=${encodeURIComponent(sort)}&limit=${PAGE_SIZE}&offset=${offset}`), movieCard,
+    'No movies yet. Add a movie library in Settings.');
+}
+
+async function showsPage() {
+  setActiveNav('shows');
+  document.title = 'TV Shows · Solidfin';
+  app.innerHTML = `<div class="toolbar"><h1>TV Shows<span class="count" id="count"></span></h1></div>
+    <div class="grid" id="grid"></div><div class="more" id="more"></div>`;
+  await pagedGrid(offset => api(`/shows?limit=${PAGE_SIZE}&offset=${offset}`), showCard,
+    'No TV shows yet. Add a TV library in Settings.');
+}
+
+async function pagedGrid(fetchPage, render, emptyText) {
+  const grid = app.querySelector('#grid');
+  const more = app.querySelector('#more');
+  let offset = 0;
+  const load = async () => {
+    const page = await fetchPage(offset);
+    if (!grid.isConnected) return;
+    offset += page.items.length;
+    grid.insertAdjacentHTML('beforeend', page.items.map(render).join(''));
+    app.querySelector('#count').textContent = page.total ? String(page.total) : '';
+    if (!page.total) grid.outerHTML = `<div class="empty">${esc(emptyText)}</div>`;
+    more.innerHTML = offset < page.total ? '<button class="btn" type="button">Load more</button>' : '';
+    const btn = more.querySelector('button');
+    if (btn) btn.addEventListener('click', () => { btn.disabled = true; load().catch(showError); });
+  };
+  await load();
+}
+
+async function showPage(id) {
+  setActiveNav('shows');
+  const { show, seasons } = await api(`/shows/${id}`);
+  document.title = `${show.title} · Solidfin`;
+  const backdrop = show.has_backdrop ? `<div class="backdrop" style="background-image:url('${showImg(show.id, 'backdrop')}')"></div>` : '';
+  const firstUnwatched = seasons.reduce((all, s) => all.concat(s.episodes), []).find(e => !(e.progress && e.progress.played));
+  app.innerHTML = `<section class="hero">${backdrop}<div class="hero-inner">
+      <div class="poster">${show.has_poster ? `<img src="${showImg(show.id, 'poster')}" alt="">` : ''}</div>
+      <div>
+        <h1>${esc(show.title)}</h1>
+        <div class="meta">${show.year ? `<span>${show.year}</span>` : ''}<span>${seasons.length} season${seasons.length === 1 ? '' : 's'}</span><span>${show.episode_count} episodes</span></div>
+        ${show.overview ? `<p class="overview">${esc(show.overview)}</p>` : ''}
+        <div class="actions">${firstUnwatched ? `<a class="btn primary" href="#/play/${firstUnwatched.id}?resume=1">▶ Play ${esc(epCode(firstUnwatched))}</a>` : ''}</div>
+      </div></div></section>
+    <div class="tabs" id="tabs">${seasons.map((s, i) => `<button type="button" data-i="${i}">${s.season === 0 ? 'Specials' : `Season ${s.season}`}</button>`).join('')}</div>
+    <div class="episodes" id="episodes"></div>`;
+
+  const tabs = app.querySelector('#tabs');
+  const list = app.querySelector('#episodes');
+  const select = i => {
+    tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', Number(b.dataset.i) === i));
+    list.innerHTML = seasons[i].episodes.map(ep => {
+      const thumb = ep.has_backdrop ? `<img src="${itemImg(ep, 'backdrop')}" alt="" loading="lazy" onerror="this.remove()">` : '';
+      return `<a class="episode" href="#/item/${ep.id}">
+        <div class="thumb">${thumb}${overlays(ep)}</div>
+        <div class="info">
+          <div class="name">${esc(ep.episode)}. ${esc(ep.title)}</div>
+          <div class="ep-meta">${esc(epCode(ep))}${ep.runtime_seconds ? ` · ${fmtRuntime(ep.runtime_seconds)}` : ''}</div>
+          ${ep.overview ? `<p>${esc(ep.overview)}</p>` : ''}
+        </div></a>`;
+    }).join('');
+  };
+  tabs.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (btn) select(Number(btn.dataset.i));
+  });
+  if (seasons.length) {
+    const start = firstUnwatched ? seasons.findIndex(s => s.episodes.includes(firstUnwatched)) : 0;
+    select(Math.max(0, start));
+  } else {
+    list.innerHTML = '<div class="empty">No episodes found.</div>';
+  }
+}
+
+async function itemPage(id) {
+  const d = await api(`/items/${id}`);
+  const item = d.item;
+  const isMovie = item.kind === 'movie';
+  setActiveNav(isMovie ? 'movies' : 'shows');
+  document.title = `${item.title} · Solidfin`;
+  const backdropSrc = item.has_backdrop ? itemImg(item, 'backdrop')
+    : (item.show_id ? showImg(item.show_id, 'backdrop') : null);
+  const backdrop = backdropSrc ? `<div class="backdrop" style="background-image:url('${backdropSrc}')"></div>` : '';
+  const p = item.progress;
+  const canResume = p && !p.played && p.position_seconds > 30;
+  const meta = [
+    !isMovie && d.show_title ? `<a href="#/show/${item.show_id}"><b>${esc(d.show_title)}</b></a>` : '',
+    isMovie ? esc(item.year) : esc(epCode(item)),
+    item.certification ? `<span class="cert">${esc(item.certification)}</span>` : '',
+    fmtRuntime(item.runtime_seconds),
+    item.rating ? `<span class="rating" title="TMDB user rating">★ ${item.rating.toFixed(1)}</span>` : '',
+    resolution(item),
+    p && p.played ? 'Watched' : '',
+  ].filter(Boolean).map(m => `<span>${m}</span>`).join('');
+  const genres = item.genres.length
+    ? `<div class="chips">${item.genres.map(g => `<span class="chip">${esc(g)}</span>`).join('')}</div>` : '';
+  const people = [
+    item.directors.length ? `<div><span class="label">Director${item.directors.length > 1 ? 's' : ''}</span>${esc(item.directors.join(', '))}</div>` : '',
+    item.cast.length ? `<div><span class="label">Starring</span>${esc(item.cast.slice(0, 6).join(', '))}</div>` : '',
+  ].filter(Boolean).join('');
+  const tech = [
+    ['Original title', item.original_title],
+    ['Released', item.release_date && new Date(`${item.release_date}T00:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })],
+    ['File', d.file_name],
+    ['Size', fmtSize(d.file_size)],
+    ['Container', item.container],
+    ['Video', item.video_codec && `${item.video_codec}${item.width ? ` ${item.width}×${item.height}` : ''}`],
+    ['Audio', item.audio_codec],
+    ['Subtitles', d.subtitles.map(s => s.label).join(', ')],
+  ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
+  const links = [
+    item.tmdb_id ? `<a href="https://www.themoviedb.org/movie/${item.tmdb_id}" target="_blank" rel="noopener noreferrer">TMDB</a>` : '',
+    item.imdb_id ? `<a href="https://www.imdb.com/title/${encodeURIComponent(item.imdb_id)}/" target="_blank" rel="noopener noreferrer">IMDb</a>` : '',
+  ].filter(Boolean).join(' · ');
+  const unmatched = isMovie && me.is_admin && serverInfo && serverInfo.tmdb && !item.tmdb_id
+    ? '<div class="notice info">This movie isn\'t matched to TMDB yet. If it stays this way after a scan, use <b>Identify</b> to pick it, or put the year in the file name, e.g. <i>Title (2010).mkv</i>.</div>' : '';
+
+  app.innerHTML = `<section class="hero">${backdrop}<div class="hero-inner">
+      <div class="poster">${item.has_poster ? `<img src="${itemImg(item, 'poster')}" alt="" onerror="this.remove()">` : ''}</div>
+      <div>
+        <h1>${esc(item.title)}</h1>
+        ${item.tagline ? `<p class="tagline">${esc(item.tagline)}</p>` : ''}
+        <div class="meta">${meta}</div>
+        ${genres}
+        ${item.overview ? `<p class="overview">${esc(item.overview)}</p>` : ''}
+        ${people ? `<div class="people">${people}</div>` : ''}
+        <div class="actions">
+          ${canResume ? `<a class="btn primary" href="#/play/${item.id}?resume=1">▶ Resume from ${fmtClock(p.position_seconds)}</a>
+                         <a class="btn" href="#/play/${item.id}">Play from start</a>`
+                      : `<a class="btn primary" href="#/play/${item.id}">▶ Play</a>`}
+          <button class="btn" type="button" id="watched">${p && p.played ? 'Mark unwatched' : 'Mark watched'}</button>
+          ${isMovie && me.is_admin ? '<button class="btn" type="button" id="identify">Identify…</button>' : ''}
+          ${isMovie && me.is_admin ? '<button class="btn" type="button" id="cleanup">Clean up…</button>' : ''}
+          ${isMovie && me.is_admin ? '<button class="btn danger" type="button" id="delete-movie">Delete…</button>' : ''}
+        </div>
+        ${unmatched}
+        ${d.browser_playable ? '' : '<div class="notice">This file\'s format may not play in a web browser yet (Solidfin plays files directly; conversion is coming later). Try it, or use a player like VLC on the original file.</div>'}
+      </div></div></section>
+    <dl class="tech">${tech}</dl>
+    ${links ? `<p class="hint ext-links">More on ${links}${item.match_locked ? ' · match chosen by hand' : ''}</p>` : ''}`;
+
+  app.querySelector('#watched').addEventListener('click', async () => {
+    const played = !(p && p.played);
+    await api(`/items/${item.id}/progress`, { method: 'PUT', body: { position_seconds: 0, played } });
+    toast(played ? 'Marked as watched' : 'Marked as unwatched');
+    itemPage(id).catch(showError);
+  });
+  const identifyBtn = app.querySelector('#identify');
+  if (identifyBtn) identifyBtn.addEventListener('click', () => openIdentify(item, () => itemPage(id).catch(showError)));
+  const cleanupBtn = app.querySelector('#cleanup');
+  if (cleanupBtn) cleanupBtn.addEventListener('click', () => openCleanup(item, () => itemPage(id).catch(showError)));
+  const deleteBtn = app.querySelector('#delete-movie');
+  if (deleteBtn) deleteBtn.addEventListener('click', () => openDelete(item));
+}
+
+// ---------- Identify dialog ----------
+
+function closeDialog() {
+  const existing = document.getElementById('dialog');
+  if (existing) existing.remove();
+  document.removeEventListener('keydown', dialogKeys);
+}
+
+function dialogKeys(e) {
+  if (e.key === 'Escape') closeDialog();
+}
+
+function openIdentify(item, onDone) {
+  closeDialog();
+  if (!serverInfo || !serverInfo.tmdb) {
+    toast('Add a TMDB API key in Settings first.');
+    location.hash = '#/settings';
+    return;
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div class="dialog-backdrop" id="dialog">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <div class="dialog-head"><h2 id="dialog-title">Identify movie</h2><button class="link" type="button" id="dialog-close" aria-label="Close">✕</button></div>
+      <p class="hint">Search TMDB and pick the right movie. Solidfin keeps your choice on future scans.</p>
+      ${serverInfo.ffmpeg ? `<div class="title-scan-bar">
+        <button class="btn small" type="button" id="title-scan-btn">Scan video for title</button>
+        <button class="btn small" type="button" id="title-scan-end-btn">Scan end credits</button>
+        <span class="hint">Reads on-screen text from the first 10 minutes, or the last 12 for movies that show their title in the credits. You choose what to search for.</span>
+      </div>
+      <div id="title-scan" class="title-scan" hidden></div>` : ''}
+      <form id="identify-form" class="identify-form">
+        <input id="identify-q" type="text" aria-label="Title" placeholder="Title">
+        <input id="identify-year" type="text" inputmode="numeric" aria-label="Year" placeholder="Year">
+        <button class="btn primary" type="submit">Search</button>
+      </form>
+      <div id="identify-results" class="candidates"><div class="loading">Searching…</div></div>
+    </div></div>`);
+  const dialog = document.getElementById('dialog');
+  const qInput = dialog.querySelector('#identify-q');
+  const yearInput = dialog.querySelector('#identify-year');
+  const results = dialog.querySelector('#identify-results');
+  dialog.querySelector('#dialog-close').addEventListener('click', closeDialog);
+  dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
+  document.addEventListener('keydown', dialogKeys);
+
+  const render = list => {
+    if (!list.length) {
+      results.innerHTML = '<div class="empty">No results. Try a shorter title or remove the year.</div>';
+      return;
+    }
+    results.innerHTML = list.map(c => `<button type="button" class="candidate${c.current ? ' current' : ''}" data-id="${c.tmdb_id}">
+        <div class="thumb">${c.poster_path ? `<img src="/api/v1/tmdb/image?path=${encodeURIComponent(c.poster_path)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
+        <div class="info">
+          <div class="name">${esc(c.title)} ${c.year ? `<span class="muted">(${c.year})</span>` : ''}${c.current ? ' <span class="pill ok">Current</span>' : ''}${c.score >= 0.6 && !c.current ? ' <span class="pill">Good match</span>' : ''}</div>
+          ${c.original_title ? `<div class="muted">${esc(c.original_title)}</div>` : ''}
+          ${c.overview ? `<p>${esc(c.overview)}</p>` : ''}
+        </div></button>`).join('');
+  };
+
+  const search = async (useDefaults) => {
+    results.innerHTML = '<div class="loading">Searching…</div>';
+    const params = new URLSearchParams();
+    if (!useDefaults) {
+      params.set('q', qInput.value.trim());
+      if (/^\d{4}$/.test(yearInput.value.trim())) params.set('year', yearInput.value.trim());
+    }
+    try {
+      render(await api(`/items/${item.id}/identify?${params}`));
+    } catch (err) {
+      results.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+    }
+  };
+
+  dialog.querySelector('#identify-form').addEventListener('submit', e => { e.preventDefault(); search(false); });
+  const scanBtn = dialog.querySelector('#title-scan-btn');
+  if (scanBtn) {
+    setupTitleScan(item, dialog.querySelector('#title-scan'), scanBtn, dialog.querySelector('#title-scan-end-btn'), text => {
+      qInput.value = text;
+      yearInput.value = '';
+      search(false);
+    });
+  }
+  results.addEventListener('click', async e => {
+    const btn = e.target.closest('.candidate');
+    if (!btn) return;
+    results.querySelectorAll('.candidate').forEach(b => { b.disabled = true; });
+    btn.classList.add('busy');
+    try {
+      await api(`/items/${item.id}/identify`, { method: 'POST', body: { tmdb_id: Number(btn.dataset.id) } });
+      closeDialog();
+      toast('Movie updated');
+      onDone();
+    } catch (err) {
+      results.querySelectorAll('.candidate').forEach(b => { b.disabled = false; });
+      btn.classList.remove('busy');
+      toast(err.message);
+    }
+  });
+
+  // Pre-fill with what the file name says, then search with it.
+  api(`/items/${item.id}/identify`).then(render).catch(err => {
+    results.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+  });
+  qInput.value = item.title;
+  yearInput.value = item.year == null ? '' : item.year;
+  qInput.focus();
+  qInput.select();
+}
+
+// ---------- Delete dialog ----------
+
+// Shows exactly what will go to the Recycle Bin, then deletes it and removes the movie.
+function openDelete(item) {
+  closeDialog();
+  document.body.insertAdjacentHTML('beforeend', `<div class="dialog-backdrop" id="dialog">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <div class="dialog-head"><h2 id="dialog-title">Delete movie</h2><button class="link" type="button" id="dialog-close" aria-label="Close">✕</button></div>
+      <p class="hint">Sends <b>${esc(item.title)}</b> to the Recycle Bin and removes it from Solidfin, including everyone's watch progress.</p>
+      <div id="delete-body"><div class="loading">Checking…</div></div>
+    </div></div>`);
+  const dialog = document.getElementById('dialog');
+  const body = dialog.querySelector('#delete-body');
+  dialog.querySelector('#dialog-close').addEventListener('click', closeDialog);
+  dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
+  document.addEventListener('keydown', dialogKeys);
+
+  const render = preview => {
+    const what = preview.folder
+      ? `<div class="label">Delete this folder and everything in it</div><ul><li>${esc(preview.folder)}</li></ul>`
+      : `<div class="label">Delete these files</div><ul>${preview.files.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+         <div class="hint">Other movies in the same folder are not touched.</div>`;
+    body.innerHTML = `<div class="rename-preview">${what}</div>
+      <div class="hint">Files on a network share have no Recycle Bin and are deleted permanently.</div>
+      <div class="error" role="alert"></div>
+      <div class="actions dialog-actions">
+        <button class="btn danger" type="button" id="delete-confirm">Delete movie</button>
+        <button class="btn" type="button" id="delete-cancel">Cancel</button>
+      </div>`;
+    body.querySelector('#delete-cancel').addEventListener('click', closeDialog);
+    const confirmBtn = body.querySelector('#delete-confirm');
+    confirmBtn.addEventListener('click', async () => {
+      body.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      confirmBtn.textContent = 'Deleting…';
+      try {
+        await api(`/items/${item.id}/delete`, { method: 'POST', body: { folder: preview.folder, files: preview.files } });
+        closeDialog();
+        toast(`${item.title} deleted`);
+        location.hash = '#/movies';
+      } catch (err) {
+        body.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        confirmBtn.textContent = 'Delete movie';
+        body.querySelector('.error').textContent = err.message;
+      }
+    });
+    body.querySelector('#delete-cancel').focus();
+  };
+
+  api(`/items/${item.id}/delete`).then(render).catch(err => {
+    body.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+  });
+}
+
+// ---------- Clean up dialog ----------
+
+// Rebuilds a movie's details from its TMDB match. When renaming is switched on in config.toml,
+// it also shows the old and new file names and only renames if the user picks that button.
+function openCleanup(item, onDone) {
+  closeDialog();
+  if (!serverInfo || !serverInfo.tmdb) {
+    toast('Add a TMDB API key in Settings first.');
+    location.hash = '#/settings';
+    return;
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div class="dialog-backdrop" id="dialog">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <div class="dialog-head"><h2 id="dialog-title">Clean up movie</h2><button class="link" type="button" id="dialog-close" aria-label="Close">✕</button></div>
+      <p class="hint">Deletes the details and artwork Solidfin has stored for <b>${esc(item.title)}</b> and downloads them again from TMDB for the movie it is identified as. Watch progress is kept.</p>
+      <div id="cleanup-body"><div class="loading">Checking…</div></div>
+    </div></div>`);
+  const dialog = document.getElementById('dialog');
+  const body = dialog.querySelector('#cleanup-body');
+  dialog.querySelector('#dialog-close').addEventListener('click', closeDialog);
+  dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
+  document.addEventListener('keydown', dialogKeys);
+
+  const run = async (changes, button) => {
+    body.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    button.textContent = 'Working…';
+    try {
+      const result = await api(`/items/${item.id}/cleanup`, { method: 'POST', body: changes });
+      closeDialog();
+      toast(result.message);
+      onDone();
+    } catch (err) {
+      body.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      body.querySelector('.error').textContent = err.message;
+      button.textContent = button.dataset.label;
+    }
+  };
+
+  const render = preview => {
+    let rename = '';
+    if (preview.renames_enabled && preview.new_name) {
+      const others = preview.other_steps.map(step =>
+        `<li><span class="muted">${esc(step.from)}</span> → ${esc(step.to)}</li>`).join('');
+      rename = `<div class="rename-preview">
+          <div class="label">Rename the file</div>
+          <div class="rename-row"><span class="muted">From</span><code>${esc(preview.current_name)}</code></div>
+          <div class="rename-row"><span class="muted">To</span><code>${esc(preview.new_name)}</code></div>
+          ${others ? `<div class="label">Also renamed with it</div><ul>${others}</ul>` : ''}
+        </div>`;
+    } else if (preview.renames_enabled && preview.rename_note) {
+      rename = `<div class="notice info">${esc(preview.rename_note)}</div>`;
+    }
+    const removals = preview.renames_enabled ? preview.remove_files : [];
+    const remove = removals.length ? `<div class="rename-preview">
+        <div class="label">Remove ${removals.length} image and subtitle file${removals.length === 1 ? '' : 's'}</div>
+        <ul>${removals.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+        <div class="hint">Moved to Solidfin's <i>removed</i> folder (not deleted). Video files are never removed.</div>
+      </div>` : '';
+    const changesFiles = preview.renames_enabled && (preview.new_name || removals.length);
+    const changes = { rename_to: preview.new_name || null, remove_files: removals };
+    body.innerHTML = `${rename}${remove}
+      <div class="error" role="alert"></div>
+      <div class="actions dialog-actions">
+        ${changesFiles ? '<button class="btn primary" type="button" id="cleanup-files" data-label="Clean up files too">Clean up files too</button>' : ''}
+        <button class="btn${changesFiles ? '' : ' primary'}" type="button" id="cleanup-only" data-label="${changesFiles ? 'Details only' : 'Clean up'}">${changesFiles ? 'Details only' : 'Clean up'}</button>
+        <button class="btn" type="button" id="cleanup-cancel">Cancel</button>
+      </div>`;
+    body.querySelector('#cleanup-cancel').addEventListener('click', closeDialog);
+    const only = body.querySelector('#cleanup-only');
+    only.addEventListener('click', () => run({}, only));
+    const filesBtn = body.querySelector('#cleanup-files');
+    if (filesBtn) filesBtn.addEventListener('click', () => run(changes, filesBtn));
+    (filesBtn || only).focus();
+  };
+
+  api(`/items/${item.id}/cleanup`).then(render).catch(err => {
+    body.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+  });
+}
+
+// "Scan video for title" / "Scan end credits": shows frames from the start or the end of the movie
+// with the text read on them. Nothing is matched automatically; clicking a piece of text only
+// fills in the search.
+function setupTitleScan(item, panel, startButton, endButton, useText) {
+  const pick = text => `<button type="button" class="chip scan-pick" data-text="${esc(text)}">${esc(text)}</button>`;
+  const render = (scan, stamp, part) => {
+    const notes = [];
+    if (!scan.ocr_available) notes.push('Text recognition isn\'t available on this PC, so check the frames yourself.');
+    else if (!scan.suggestions.length) {
+      notes.push(part === 'start'
+        ? 'No title-like text was found. Check the frames below, or try Scan end credits.'
+        : 'No title-like text was found. Check the frames below.');
+    }
+    const suggestions = scan.suggestions.length
+      ? `<div class="scan-label">Text that looks like a title. Click one to search for it:</div><div class="chips">${scan.suggestions.map(pick).join('')}</div>` : '';
+    const frames = scan.frames.map(f => `<figure class="scan-frame">
+        <img src="/api/v1/items/${item.id}/title-scan/frames/${f.index}?t=${stamp}" alt="Frame at ${fmtClock(f.time_seconds)}" loading="lazy">
+        <figcaption><span class="muted">${fmtClock(f.time_seconds)}</span>${f.lines.map(pick).join('')}</figcaption>
+      </figure>`).join('');
+    panel.innerHTML = `${notes.map(n => `<div class="hint">${n}</div>`).join('')}${suggestions}
+      <div class="scan-label">${scan.frames.length} of ${scan.frames_read} frames shown. Click a frame to enlarge it.</div>
+      <div class="scan-frames">${frames}</div>`;
+  };
+
+  const scan = async (button, part) => {
+    const label = button.textContent;
+    startButton.disabled = endButton.disabled = true;
+    button.textContent = 'Scanning…';
+    panel.hidden = false;
+    panel.innerHTML = `<div class="loading">Reading the ${part === 'start' ? 'start' : 'end credits'} of the video. This can take a minute…</div>`;
+    try {
+      render(await api(`/items/${item.id}/title-scan?part=${part}`, { method: 'POST' }), Date.now(), part);
+    } catch (err) {
+      panel.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+    } finally {
+      startButton.disabled = endButton.disabled = false;
+      button.textContent = label;
+    }
+  };
+  startButton.addEventListener('click', () => scan(startButton, 'start'));
+  endButton.addEventListener('click', () => scan(endButton, 'end'));
+  panel.addEventListener('click', e => {
+    const chosen = e.target.closest('.scan-pick');
+    if (chosen) { useText(chosen.dataset.text); return; }
+    const frame = e.target.closest('.scan-frame');
+    if (frame && e.target.tagName === 'IMG') frame.classList.toggle('big');
+  });
+}
+
+function fmtClock(seconds) {
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
+
+async function playerPage(id, params) {
+  const d = await api(`/items/${id}`);
+  const item = d.item;
+  topbar.hidden = true;
+  document.title = `${item.title} · Solidfin`;
+  const isLang = l => /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(l || '');
+  const tracks = d.subtitles.map(s =>
+    `<track kind="subtitles" src="/api/v1/subtitles/${s.id}" label="${esc(s.label)}"${isLang(s.language) ? ` srclang="${esc(s.language)}"` : ''}>`).join('');
+  const title = item.kind === 'episode' && d.show_title ? `${d.show_title} — ${epCode(item)} ${item.title}` : item.title;
+  app.innerHTML = `<div class="player" id="player">
+      <div class="player-bar"><a class="btn small" href="#/item/${item.id}">← Back</a><span class="ptitle">${esc(title)}</span></div>
+      <video id="video" controls autoplay playsinline preload="metadata" src="/api/v1/items/${item.id}/stream">${tracks}</video>
+    </div>`;
+  const player = app.querySelector('#player');
+  const video = app.querySelector('#video');
+  const resumeAt = params.get('resume') && item.progress && !item.progress.played ? item.progress.position_seconds : 0;
+
+  video.addEventListener('loadedmetadata', () => { if (resumeAt > 0) video.currentTime = resumeAt; }, { once: true });
+  let lastSave = Date.now();
+  const save = played => {
+    if (!video.currentTime && !played) return;
+    const body = { position_seconds: video.currentTime };
+    if (played !== undefined) body.played = played;
+    api(`/items/${item.id}/progress`, { method: 'PUT', body }).catch(() => {});
+  };
+  video.addEventListener('timeupdate', () => {
+    if (Date.now() - lastSave > 10000) { lastSave = Date.now(); save(); }
+  });
+  video.addEventListener('pause', () => save());
+  video.addEventListener('ended', () => save(true));
+  video.addEventListener('error', () => {
+    player.insertAdjacentHTML('beforeend', `<div class="play-error"><h3>Can't play this file in the browser</h3>
+      <p>The video format (${esc(item.video_codec || 'unknown')} / ${esc(item.audio_codec || 'unknown')} in ${esc(d.file_name.split('.').pop())}) isn't supported by this browser.
+      Solidfin doesn't convert video yet, so open the original file in a player like VLC for now.</p>
+      <a class="btn" href="#/item/${item.id}">Back</a></div>`);
+  });
+
+  let idleTimer;
+  const wake = () => {
+    player.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => player.classList.add('idle'), 2500);
+  };
+  player.addEventListener('mousemove', wake);
+  wake();
+  const onKey = e => { if (e.key === 'Escape' && !document.fullscreenElement) location.hash = `#/item/${item.id}`; };
+  document.addEventListener('keydown', onKey);
+
+  cleanup = () => {
+    save();
+    clearTimeout(idleTimer);
+    document.removeEventListener('keydown', onKey);
+    video.pause();
+    video.removeAttribute('src');
+    video.load(); // stops the download
+  };
+}
+
+async function searchPage(params) {
+  setActiveNav('');
+  const q = params.get('q') || '';
+  document.getElementById('search-input').value = q;
+  document.title = `Search · Solidfin`;
+  const res = await api(`/search?q=${encodeURIComponent(q)}`);
+  const parts = [];
+  if (res.shows.length) parts.push(`<h2 class="row-title">TV Shows</h2><div class="grid">${res.shows.map(showCard).join('')}</div>`);
+  if (res.movies.length) parts.push(`<h2 class="row-title">Movies</h2><div class="grid">${res.movies.map(movieCard).join('')}</div>`);
+  app.innerHTML = `<h1>Results for “${esc(q)}”</h1>${parts.join('') || '<div class="empty">No matches.</div>'}`;
+}
+
+// ---------- Settings ----------
+
+async function settingsPage() {
+  setActiveNav('settings');
+  document.title = 'Settings · Solidfin';
+  const adminPanels = me.is_admin ? `
+    <section class="panel"><h2>Libraries</h2>
+      <div class="list" id="libs"></div>
+      <form id="lib-form" class="form-row">
+        <div><label for="lib-name">Name</label><input id="lib-name" type="text" placeholder="Movies" required></div>
+        <div><label for="lib-kind">Type</label><select id="lib-kind"><option value="movies">Movies</option><option value="shows">TV Shows</option></select></div>
+        <div><label for="lib-path">Folder</label><input id="lib-path" type="text" placeholder="D:\\Movies or \\\\NAS\\Video\\Movies" required></div>
+        <button class="btn primary" type="submit">Add</button>
+      </form>
+      <div class="error" id="lib-err"></div>
+      <div class="hint">Movies: one file per movie, ideally named <i>Title (Year)</i>. TV: <i>Show Name/Season 01/Show Name - S01E01.mkv</i>. Solidfin never changes your files unless you allow it below.</div>
+      <label class="check setting-check"><input id="allow-renames" type="checkbox"> Allow file renames and deletes</label>
+      <div class="hint">Lets <b>Clean up</b> on a movie's page rename the file to <i>Title (Year)\\Title (Year) 1080p.mkv</i> and move the images and subtitles in its folder to Solidfin's <i>removed</i> folder, and lets <b>Delete</b> send a movie and its folder to the Recycle Bin. Other movies' files are left alone, and you always see every change first.</div>
+    </section>
+    <section class="panel"><h2>Metadata (TMDB)</h2>
+      <div class="status-line" id="meta-status"></div>
+      <form id="meta-form" class="form-row meta">
+        <div><label for="tmdb-key">TMDB API key or Read Access Token</label><input id="tmdb-key" type="password" autocomplete="off" spellcheck="false"></div>
+        <div><label for="meta-lang">Language</label><select id="meta-lang"></select></div>
+        <button class="btn primary" type="submit">Save</button>
+      </form>
+      <div class="error" id="meta-err"></div>
+      <div class="hint">Solidfin matches each movie's file name to The Movie Database and downloads its poster, description, cast and more.
+        Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">themoviedb.org/settings/api</a>.
+        <span id="meta-remove-wrap" hidden> · <button class="link inline" type="button" id="meta-remove">Remove saved key</button></span></div>
+      <div class="hint tmdb-credit">This product uses the TMDB API but is not endorsed or certified by TMDB.</div>
+    </section>
+    <section class="panel"><h2>Scanning</h2>
+      <div class="status-line" id="scan-status"></div>
+      <div class="actions">
+        <button class="btn" type="button" id="scan-now">Scan all libraries now</button>
+        <button class="btn" type="button" id="refresh-meta">Refresh all metadata</button>
+      </div>
+      <div class="hint" id="features"></div>
+    </section>
+    <section class="panel"><h2>Users</h2>
+      <div class="list" id="users"></div>
+      <form id="user-form" class="form-row users">
+        <div><label for="new-user">Username</label><input id="new-user" type="text" autocomplete="off" required></div>
+        <div><label for="new-pass">Password</label><input id="new-pass" type="password" autocomplete="new-password" required></div>
+        <div><label class="check"><input id="new-admin" type="checkbox"> Administrator</label></div>
+        <button class="btn primary" type="submit">Add user</button>
+      </form>
+      <div class="error" id="user-err"></div>
+    </section>` : '';
+
+  app.innerHTML = `<h1>Settings</h1>${adminPanels}
+    <section class="panel"><h2>Your account</h2>
+      <p class="hint">Signed in as <b>${esc(me.username)}</b>${me.is_admin ? ' (administrator)' : ''}.</p>
+      <form id="pw-form" class="form-row users">
+        <div><label for="pw1">New password</label><input id="pw1" type="password" autocomplete="new-password" required></div>
+        <div><label for="pw2">Confirm</label><input id="pw2" type="password" autocomplete="new-password" required></div>
+        <div></div>
+        <button class="btn" type="submit">Change password</button>
+      </form>
+      <div class="error" id="pw-err"></div>
+    </section>
+    <p class="hint">Solidfin ${esc(serverInfo ? serverInfo.version : '')}</p>`;
+
+  app.querySelector('#pw-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = app.querySelector('#pw-err');
+    const pw = app.querySelector('#pw1').value;
+    if (pw !== app.querySelector('#pw2').value) { err.textContent = 'Passwords do not match.'; return; }
+    try {
+      await api(`/users/${me.id}/password`, { method: 'PUT', body: { password: pw } });
+      toast('Password changed. Please sign in again.');
+      me = null;
+      location.hash = '#/login';
+    } catch (ex) { err.textContent = ex.message; }
+  });
+
+  if (!me.is_admin) return;
+  await Promise.all([renderLibraries(), renderUsers(), renderScanStatus(), renderMetadataSettings(), renderLibrarySettings()]);
+
+  const renamesBox = app.querySelector('#allow-renames');
+  renamesBox.addEventListener('change', async () => {
+    renamesBox.disabled = true;
+    try {
+      const res = await api('/settings/library', { method: 'PUT', body: { allow_file_renames: renamesBox.checked } });
+      renamesBox.checked = res.allow_file_renames;
+      toast(res.allow_file_renames ? 'File renames and deletes allowed' : 'File renames and deletes switched off');
+    } catch (ex) {
+      renamesBox.checked = !renamesBox.checked;
+      toast(ex.message);
+    } finally { renamesBox.disabled = false; }
+  });
+
+  app.querySelector('#meta-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = app.querySelector('#meta-err');
+    err.textContent = '';
+    const body = { language: app.querySelector('#meta-lang').value };
+    const key = app.querySelector('#tmdb-key').value.trim();
+    if (key) body.tmdb_api_key = key;
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      const res = await api('/settings/metadata', { method: 'PUT', body });
+      serverInfo.tmdb = res.has_key;
+      app.querySelector('#tmdb-key').value = '';
+      toast(res.has_key ? 'Saved. Fetching movie details now…' : 'Saved');
+      await renderMetadataSettings(res);
+      renderScanStatus();
+    } catch (ex) { err.textContent = ex.message; } finally { btn.disabled = false; }
+  });
+  app.querySelector('#meta-remove').addEventListener('click', async () => {
+    if (!window.confirm('Remove the TMDB key saved in Settings?')) return;
+    const res = await api('/settings/metadata', { method: 'PUT', body: { tmdb_api_key: '' } });
+    serverInfo.tmdb = res.has_key;
+    toast('Key removed');
+    renderMetadataSettings(res);
+  });
+
+  app.querySelector('#lib-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = app.querySelector('#lib-err');
+    err.textContent = '';
+    const body = {
+      name: app.querySelector('#lib-name').value,
+      kind: app.querySelector('#lib-kind').value,
+      path: app.querySelector('#lib-path').value,
+    };
+    try {
+      await api('/libraries', { method: 'POST', body });
+      e.target.reset();
+      toast('Library added. Scanning now…');
+      await renderLibraries();
+      await renderScanStatus();
+    } catch (ex) { err.textContent = ex.message; }
+  });
+
+  app.querySelector('#scan-now').addEventListener('click', async () => {
+    const res = await api('/scan', { method: 'POST' });
+    toast(res.started ? 'Scan started' : 'A scan is already running');
+    renderScanStatus();
+  });
+  app.querySelector('#refresh-meta').addEventListener('click', async () => {
+    await api('/metadata/refresh', { method: 'POST' });
+    toast('Refreshing metadata…');
+    renderScanStatus();
+  });
+
+  app.querySelector('#user-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = app.querySelector('#user-err');
+    err.textContent = '';
+    try {
+      await api('/users', { method: 'POST', body: {
+        username: app.querySelector('#new-user').value,
+        password: app.querySelector('#new-pass').value,
+        is_admin: app.querySelector('#new-admin').checked,
+      } });
+      e.target.reset();
+      toast('User added');
+      renderUsers();
+    } catch (ex) { err.textContent = ex.message; }
+  });
+
+  // Poll the scan status while the settings page is open.
+  const timer = setInterval(() => { renderScanStatus().catch(() => {}); }, 3000);
+  cleanup = () => clearInterval(timer);
+}
+
+const LANGUAGES = [
+  ['en-US', 'English (US)'], ['en-AU', 'English (Australia)'], ['en-GB', 'English (UK)'], ['en-CA', 'English (Canada)'],
+  ['en-NZ', 'English (New Zealand)'], ['fr-FR', 'Français'], ['de-DE', 'Deutsch'], ['es-ES', 'Español (España)'],
+  ['es-MX', 'Español (México)'], ['it-IT', 'Italiano'], ['nl-NL', 'Nederlands'], ['pt-BR', 'Português (Brasil)'],
+  ['sv-SE', 'Svenska'], ['pl-PL', 'Polski'], ['ja-JP', '日本語'], ['ko-KR', '한국어'], ['zh-CN', '中文 (简体)'],
+];
+
+async function renderMetadataSettings(current) {
+  const m = current || await api('/settings/metadata');
+  const status = app.querySelector('#meta-status');
+  if (!status) return;
+  const source = m.key_source === 'config' ? ' (from config.toml)' : '';
+  status.innerHTML = m.has_key
+    ? `<span class="pill ok">Connected</span><span class="hint">Key ${esc(m.key_hint || '')}${source}</span>`
+    : '<span class="pill warn">Not set up</span><span class="hint">Movies are shown using their file names only.</span>';
+  const keyInput = app.querySelector('#tmdb-key');
+  keyInput.placeholder = m.has_key ? 'Leave blank to keep the current key' : 'Paste your key here';
+  const select = app.querySelector('#meta-lang');
+  const options = LANGUAGES.some(([code]) => code === m.language) ? LANGUAGES : [[m.language, m.language], ...LANGUAGES];
+  select.innerHTML = options.map(([code, name]) => `<option value="${esc(code)}">${esc(name)}</option>`).join('');
+  select.value = m.language;
+  app.querySelector('#meta-remove-wrap').hidden = m.key_source !== 'app';
+}
+
+async function renderLibrarySettings() {
+  const s = await api('/settings/library');
+  const box = app.querySelector('#allow-renames');
+  if (box) box.checked = s.allow_file_renames;
+}
+
+async function renderLibraries() {
+  const libs = await api('/libraries');
+  const el = app.querySelector('#libs');
+  if (!el) return;
+  el.innerHTML = libs.length ? libs.map(l => `<div class="list-item">
+      <div class="grow"><div><b>${esc(l.name)}</b> <span class="pill">${l.kind === 'shows' ? 'TV Shows' : 'Movies'}</span></div>
+      <div class="muted" title="${esc(l.path)}">${esc(l.path)}</div></div>
+      <button class="btn small danger" type="button" data-del-lib="${l.id}" data-name="${esc(l.name)}">Remove</button>
+    </div>`).join('') : '<div class="hint">No libraries yet.</div>';
+  el.querySelectorAll('[data-del-lib]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!window.confirm(`Remove the library "${btn.dataset.name}"? Your files are not deleted.`)) return;
+    await api(`/libraries/${btn.dataset.delLib}`, { method: 'DELETE' });
+    toast('Library removed');
+    renderLibraries();
+  }));
+}
+
+async function renderUsers() {
+  const users = await api('/users');
+  const el = app.querySelector('#users');
+  if (!el) return;
+  el.innerHTML = users.map(u => `<div class="list-item">
+      <div class="grow"><b>${esc(u.username)}</b> ${u.is_admin ? '<span class="pill">Admin</span>' : ''}</div>
+      <button class="btn small" type="button" data-pw="${u.id}" data-name="${esc(u.username)}">Set password</button>
+      ${u.id === me.id ? '' : `<button class="btn small danger" type="button" data-del-user="${u.id}" data-name="${esc(u.username)}">Delete</button>`}
+    </div>`).join('');
+  el.querySelectorAll('[data-del-user]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!window.confirm(`Delete the user "${btn.dataset.name}"?`)) return;
+    try {
+      await api(`/users/${btn.dataset.delUser}`, { method: 'DELETE' });
+      toast('User deleted');
+      renderUsers();
+    } catch (ex) { toast(ex.message); }
+  }));
+  el.querySelectorAll('[data-pw]').forEach(btn => btn.addEventListener('click', async () => {
+    const pw = window.prompt(`New password for ${btn.dataset.name}:`);
+    if (!pw) return;
+    try {
+      await api(`/users/${btn.dataset.pw}/password`, { method: 'PUT', body: { password: pw } });
+      toast('Password updated');
+      if (Number(btn.dataset.pw) === me.id) { me = null; location.hash = '#/login'; }
+    } catch (ex) { toast(ex.message); }
+  }));
+}
+
+async function renderScanStatus() {
+  const s = await api('/scan');
+  const el = app.querySelector('#scan-status');
+  if (!el) return;
+  el.innerHTML = `<span class="dot ${s.running ? 'on' : ''}"></span>
+    <b>${esc(s.running ? s.phase : 'Idle')}</b>
+    <span class="hint">Last finished: ${esc(fmtDate(s.last_finished))}</span>
+    ${s.errors.map(e => `<div class="error" style="flex-basis:100%">${esc(e)}</div>`).join('')}`;
+  const features = app.querySelector('#features');
+  if (features && serverInfo) {
+    features.innerHTML = `
+      <span class="pill ${serverInfo.ffprobe ? 'ok' : 'warn'}">ffprobe ${serverInfo.ffprobe ? 'found' : 'not found'}</span>
+      <span class="pill ${serverInfo.tmdb ? 'ok' : 'warn'}">TMDB ${serverInfo.tmdb ? 'enabled' : 'not configured'}</span>
+      ${serverInfo.ffprobe ? '' : '<div>Install FFmpeg (or put ffprobe.exe next to solidfin.exe) to see durations and codecs.</div>'}
+      ${serverInfo.tmdb ? '' : '<div>Add a free TMDB key in the Metadata section above for posters, titles and descriptions.</div>'}`;
+  }
+}
+
+// ---------- Router ----------
+
+const routes = [
+  [/^\/$/, () => homePage()],
+  [/^\/movies$/, (m, p) => moviesPage(p)],
+  [/^\/shows$/, () => showsPage()],
+  [/^\/show\/(\d+)$/, m => showPage(m[1])],
+  [/^\/item\/(\d+)$/, m => itemPage(m[1])],
+  [/^\/play\/(\d+)$/, (m, p) => playerPage(m[1], p)],
+  [/^\/search$/, (m, p) => searchPage(p)],
+  [/^\/settings$/, () => settingsPage()],
+];
+
+async function route() {
+  if (cleanup) { try { cleanup(); } catch (_) { /* ignore */ } cleanup = null; }
+  closeDialog();
+  const hash = location.hash.replace(/^#/, '') || '/';
+  const [path, query] = hash.split('?');
+  const params = new URLSearchParams(query || '');
+
+  try {
+    if (!serverInfo) serverInfo = await api('/setup');
+    if (serverInfo.needs_setup) { setupPage(); return; }
+    if (path === '/login') { loginPage(); return; }
+    if (!me) me = await api('/auth/me');
+  } catch (err) {
+    if (err.status !== 401) showError(err);
+    return;
+  }
+
+  topbar.hidden = false;
+  window.scrollTo(0, 0);
+  for (const [re, handler] of routes) {
+    const m = path.match(re);
+    if (m) {
+      app.innerHTML = '<div class="loading">Loading…</div>';
+      try { await handler(m, params); } catch (err) { showError(err); }
+      return;
+    }
+  }
+  app.innerHTML = '<div class="empty"><h2>Page not found</h2><p><a class="btn" href="#/">Go home</a></p></div>';
+}
+
+document.getElementById('search-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = document.getElementById('search-input').value.trim();
+  if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
+});
+
+document.getElementById('logout').addEventListener('click', async () => {
+  await api('/auth/logout', { method: 'POST' }).catch(() => {});
+  me = null;
+  location.hash = '#/login';
+});
+
+window.addEventListener('hashchange', route);
+route();
