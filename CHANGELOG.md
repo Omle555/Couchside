@@ -13,6 +13,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the new location and `solidfin.db` is renamed to `couchside.db`. Users must sign in again.
 
 ### Added
+- Full video conversion (transcoding phase 2): `transcode` playback mode re-encodes video to
+  H.264 8-bit with NVENC (`h264_nvenc`, CUDA decode) or libx264, scaled to the viewer's limit, with
+  stereo AAC. Fixed 6 s HLS segments (keyframes forced on segment boundaries only), exact seeking
+  on restart, NVENC self-test at startup and per-stream fallback to x264 (rule 7.5). HDR (PQ/HLG)
+  is tone-mapped with libplacebo through Vulkan on the GPU path, zscale + tonemap on the CPU path.
+  `[transcode] max_transcodes` limits conversions separately from `max_remuxes`.
+- `quality` in `POST /items/{id}/playback` (`auto`, `original`, `1080p`, `720p`, `480p`), a
+  Quality menu in the player, `gpu` in the playback response and `video_encoder` in `GET /setup`.
 - Repackaged playback (transcoding phase 1): `POST /items/{id}/playback` takes the device's
   supported formats and picks direct play, remux (copy into fragmented MP4) or audio convert
   (video copied, audio to stereo AAC). Repackaged streams are HLS with a full VOD playlist built
@@ -79,14 +87,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   subnet only); `uninstall-service` removes it
 
 ### Fixed
+- Seeking far ahead in a repackaged or converted stream: segments from a restarted ffmpeg now
+  carry absolute fragment times (`movflags=+frag_discont`), so they fit the init segment the
+  player already has
+- MKV on iPhone/Safari: Safari no longer claims MKV support, and when direct play fails the
+  fallback converts audio that can't be copied into MP4 (Vorbis) instead of failing
 - After Identify, the movie page and lists show the new match's poster and backdrop straight
   away instead of the browser's cached artwork from the old match
 
 ### Planned
-- On-the-fly transcoding / remuxing with FFmpeg for formats browsers can't play
 - Embedded subtitle tracks
 - System tray icon and Windows installer (MSI)
-- File-system watching for instant updates
 
 ## [0.1.0] - 2026-10-11
 

@@ -5,17 +5,19 @@
 //! See `docs/transcoding-plan.md` and `docs/adr/0002-transcoding.md`.
 
 mod decision;
+mod encode;
 mod process;
 mod segments;
 mod sessions;
 mod temp;
 
 pub use decision::{
-    decide, AudioCodec, ClientProfile, Container, PlaybackDecision, PlaybackMode, Reason,
-    SourceInfo, VideoCodec,
+    decide, decide_after_direct_failure, hdr_kind, output_height, AudioCodec, ClientProfile,
+    Container, PlaybackDecision, PlaybackMode, Quality, Reason, SourceInfo, VideoCodec,
 };
-pub use segments::{read_keyframes, segments, Segment};
-pub use sessions::{ManagerSettings, StreamRequest, TranscodeManager};
+pub use encode::{Hdr, VideoEncode};
+pub use segments::{fixed_segments, read_keyframes, segments, Segment};
+pub use sessions::{ManagerSettings, StreamRequest, TranscodeManager, VideoEncoder};
 pub use temp::{clear_temp_dir, SESSION_DIR_PREFIX};
 
 /// Errors from streaming and keyframe scans.

@@ -58,8 +58,8 @@ watch_delay_seconds = 10
 allow_file_renames = false
 
 [transcode]
-# Converting files a browser or TV can't play as they are. Repackaging a file and converting
-# its sound work now; full video conversion (hardware, max_transcodes) arrives in a later update.
+# Converting files a browser or TV can't play as they are: repackaging the file, converting
+# its sound, or converting the video itself (AVI, WMV, 10-bit, HEVC on devices without it, 4K).
 # "nvenc" = use an NVIDIA graphics card, "none" = use the processor only.
 # With "nvenc", Couchside falls back to the processor if the graphics card fails.
 hardware = "none"

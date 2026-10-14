@@ -6,6 +6,21 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-14 (later)**
+- **Every video now plays: Couchside converts the picture itself when it has to.** AVI, WMV,
+  MPEG-2, 10-bit H.264, HEVC on devices without HEVC and 4K on smaller screens are converted to
+  H.264 while they play, on the NVIDIA graphics card when `[transcode] hardware = "nvenc"` (on the
+  processor if the card fails or is switched off). 4K HDR films are tone-mapped on the card so
+  they don't look washed out. The player label says "Converting video (GPU)".
+- **Quality menu in the player:** Auto, Original, 1080p, 720p, 480p, remembered per device.
+  Changing it carries on from the same spot.
+- **Seeking in repackaged and converted streams fixed.** Jumping far ahead could stall or jump,
+  because the restarted stream's timing didn't match the start of the stream.
+- **iPhone fix:** MKV files with Vorbis sound (and other MKVs) now play on iPhones: Safari is no
+  longer told it can open MKV, and the fallback converts sound that can't be repackaged.
+- At most 2 videos are converted at once (`max_transcodes`); Settings shows whether conversion uses
+  the graphics card or the processor.
+
 **2026-10-14**
 - **Movies with AC3 or DTS sound now play in the browser and on the TV.** When a device can't
   play a file's sound or file type, Couchside repackages it on the fly: the picture is copied
@@ -204,8 +219,14 @@ fly with FFmpeg: the picture is copied untouched and the sound is converted to s
 label in the corner of the player says which is happening. Seeking works as usual. On Samsung and
 other smart-TV browsers Couchside sticks to H.264/AAC MP4, which every TV plays.
 
-Files whose picture itself can't be played (AVI/WMV, 10-bit H.264, HEVC on devices without HEVC)
-need full video conversion, which is coming in a later update.
+Files whose picture itself can't be played (AVI/WMV/MPEG-2, 10-bit H.264, HEVC on devices
+without HEVC, 4K on a device that wants less) are converted to H.264 while they play, on an NVIDIA
+graphics card when `[transcode] hardware = "nvenc"` (falling back to the processor if the card
+fails) or on the processor otherwise. HDR films are tone-mapped (on the graphics card) so they
+don't look washed out.
+The Quality menu in the player (Auto, Original, 1080p, 720p, 480p) is remembered per device;
+picking a size below the film's converts it down. At most `max_transcodes` (default 2) videos are
+converted at once.
 
 ## Project layout
 

@@ -1,6 +1,7 @@
 //! Choosing the cheapest way to get a file playing on a client: direct play, remux,
 //! audio convert or full transcode (rule 7.4).
 
+use crate::encode::Hdr;
 use couchside_core::StreamKind;
 use couchside_db::MediaStream;
 use serde::{Deserialize, Serialize};
@@ -191,6 +192,60 @@ impl ClientProfile {
     }
 }
 
+/// The viewer's quality choice in the player.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub enum Quality {
+    /// The device's own limit (if any).
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    /// No height limit: the original size whenever the device plays it.
+    #[serde(rename = "original")]
+    Original,
+    /// At most 1080p.
+    #[serde(rename = "1080p")]
+    P1080,
+    /// At most 720p.
+    #[serde(rename = "720p")]
+    P720,
+    /// At most 480p.
+    #[serde(rename = "480p")]
+    P480,
+}
+
+impl Quality {
+    /// `profile` with its height limit set by this choice. A limit below the video's height
+    /// makes [`decide`] convert the video down to it.
+    pub fn apply(self, profile: &ClientProfile) -> ClientProfile {
+        let max_height = match self {
+            Self::Auto => profile.max_height,
+            Self::Original => None,
+            Self::P1080 => Some(1080),
+            Self::P720 => Some(720),
+            Self::P480 => Some(480),
+        };
+        ClientProfile {
+            max_height,
+            ..profile.clone()
+        }
+    }
+}
+
+/// Height a converted video is scaled down to: the client's limit, when the source is taller.
+pub fn output_height(source_height: Option<i64>, client: &ClientProfile) -> Option<i64> {
+    let max = client.effective().max_height?;
+    source_height.filter(|&h| h > max).map(|_| max)
+}
+
+/// The HDR kind of a video stream (PQ or HLG), which needs tone mapping to look right as SDR.
+pub fn hdr_kind(stream: &MediaStream) -> Option<Hdr> {
+    match stream.color_transfer.as_deref() {
+        Some("smpte2084") => Some(Hdr::Pq),
+        Some("arib-std-b67") => Some(Hdr::Hlg),
+        _ => None,
+    }
+}
+
 /// What is known about the file being played.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceInfo<'a> {
@@ -329,24 +384,44 @@ pub fn decide(source: &SourceInfo<'_>, client: &ClientProfile) -> PlaybackDecisi
             }
         }
     }
-    let audio_codec = audio.map(AudioCodec::from_stream);
-    let audio_name = || audio.and_then(|a| a.codec.clone()).unwrap_or_default();
-    if let Some(codec) = audio_codec {
-        if !client.audio.contains(&codec) {
-            decision.raise(PlaybackMode::AudioConvert, Reason::AudioCodec(audio_name()));
+    if let Some(a) = audio {
+        if !client.audio.contains(&AudioCodec::from_stream(a)) {
+            decision.raise(
+                PlaybackMode::AudioConvert,
+                Reason::AudioCodec(a.codec.clone().unwrap_or_default()),
+            );
         }
     }
     if !client.containers.contains(&source.container) {
         decision.raise(PlaybackMode::Remux, Reason::Container(source.container));
-        let copies_audio = decision.mode == PlaybackMode::Remux;
-        if copies_audio && audio_codec.is_some_and(|c| !c.fits_mp4()) {
-            decision.raise(
-                PlaybackMode::AudioConvert,
-                Reason::AudioNotInMp4(audio_name()),
-            );
-        }
+        convert_audio_if_not_mp4(&mut decision, audio);
     }
     decision
+}
+
+/// Like [`decide`], for a client that tried the original file and couldn't play it even
+/// though it claimed it could: the file is repackaged at least.
+pub fn decide_after_direct_failure(
+    source: &SourceInfo<'_>,
+    client: &ClientProfile,
+) -> PlaybackDecision {
+    let mut decision = decide(source, client);
+    if decision.mode == PlaybackMode::DirectPlay {
+        decision.mode = PlaybackMode::Remux;
+        convert_audio_if_not_mp4(&mut decision, pick(source.streams, StreamKind::Audio));
+    }
+    decision
+}
+
+/// Moves a remux to audio convert when the audio can't be copied into MP4 (e.g. Vorbis).
+fn convert_audio_if_not_mp4(decision: &mut PlaybackDecision, audio: Option<&MediaStream>) {
+    let Some(audio) = audio else { return };
+    if decision.mode == PlaybackMode::Remux && !AudioCodec::from_stream(audio).fits_mp4() {
+        decision.raise(
+            PlaybackMode::AudioConvert,
+            Reason::AudioNotInMp4(audio.codec.clone().unwrap_or_default()),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -585,6 +660,65 @@ mod tests {
         assert_eq!(d.mode, PlaybackMode::AudioConvert);
         assert_eq!(d.reasons, vec![Reason::AudioCodec("dts".into())]);
         assert_eq!(d.reasons[0].to_string(), "this device can't play DTS audio");
+    }
+
+    #[test]
+    fn failed_direct_play_repackages_and_converts_unfit_audio() {
+        let source = |streams| SourceInfo {
+            container: Container::Mkv,
+            streams,
+            height: Some(1080),
+        };
+        let vorbis = [video("h264", 8), audio(1, "vorbis", false)];
+        let d = decide_after_direct_failure(&source(&vorbis), &chrome());
+        assert_eq!(d.mode, PlaybackMode::AudioConvert);
+        assert_eq!(d.reasons, vec![Reason::AudioNotInMp4("vorbis".into())]);
+
+        let aac = [video("h264", 8), audio(1, "aac", false)];
+        let d = decide_after_direct_failure(&source(&aac), &chrome());
+        assert_eq!(d.mode, PlaybackMode::Remux);
+        assert!(d.reasons.is_empty());
+    }
+
+    #[test]
+    fn quality_choice_sets_the_height_limit() {
+        let streams = [video("h264", 8), audio(1, "aac", false)];
+        let source = SourceInfo {
+            container: Container::Mp4,
+            streams: &streams,
+            height: Some(1080),
+        };
+        let phone = ClientProfile {
+            max_height: Some(1080),
+            ..chrome()
+        };
+        let mode_at = |q: Quality| decide(&source, &q.apply(&phone)).mode;
+        assert_eq!(mode_at(Quality::Auto), PlaybackMode::DirectPlay);
+        assert_eq!(mode_at(Quality::P1080), PlaybackMode::DirectPlay);
+        assert_eq!(mode_at(Quality::P720), PlaybackMode::Transcode);
+        assert_eq!(Quality::Original.apply(&phone).max_height, None);
+        assert_eq!(
+            output_height(Some(1080), &Quality::P720.apply(&phone)),
+            Some(720)
+        );
+        assert_eq!(output_height(Some(480), &Quality::P720.apply(&phone)), None);
+        assert_eq!(output_height(Some(2160), &tv()), Some(1080));
+        assert_eq!(
+            output_height(Some(2160), &Quality::Original.apply(&phone)),
+            None
+        );
+        let q: Quality = serde_json::from_str("\"720p\"").expect("parses");
+        assert_eq!(q, Quality::P720);
+    }
+
+    #[test]
+    fn hdr_is_pq_or_hlg() {
+        let mut v = video("hevc", 10);
+        assert_eq!(hdr_kind(&v), None);
+        v.color_transfer = Some("smpte2084".into());
+        assert_eq!(hdr_kind(&v), Some(Hdr::Pq));
+        v.color_transfer = Some("arib-std-b67".into());
+        assert_eq!(hdr_kind(&v), Some(Hdr::Hlg));
     }
 
     #[test]

@@ -280,7 +280,13 @@ async fn start_services(
         ffmpeg: ffmpeg.as_ref().map(|f| f.path().to_path_buf()),
         temp_dir: config.transcode_dir(),
         max_remuxes: config.transcode.max_remuxes,
+        max_transcodes: config.transcode.max_transcodes,
+        hardware: config.transcode.hardware,
         temp_max_bytes: config.transcode.temp_max_gb.saturating_mul(1 << 30),
+    });
+    tokio::spawn({
+        let transcoder = Arc::clone(&transcoder);
+        async move { transcoder.check_gpu().await }
     });
     let manager = LibraryManager::new(db.clone(), ffprobe.clone(), tmdb);
     manager.spawn_schedule(config.scan.interval_minutes, config.scan.scan_on_startup);

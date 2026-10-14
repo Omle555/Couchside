@@ -169,6 +169,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
 .player.idle .player-bar { opacity: 0; }
 .player-bar .ptitle { font-weight: 600; }
 .player-bar .pmode { margin-left: auto; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; white-space: nowrap; }
+.player-bar .pquality { flex-shrink: 0; font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.55); color: #fff; }
+.player-bar .pmode[hidden] + .pquality { margin-left: auto; }
 .player .play-error { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; text-align: center; z-index: 3; }
 
 /* ---------- Settings ---------- */

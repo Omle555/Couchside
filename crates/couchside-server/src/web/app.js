@@ -461,7 +461,7 @@ async function itemPage(id) {
           ${isMovie && me.is_admin ? '<button class="btn danger" type="button" id="delete-movie">Delete…</button>' : ''}
         </div>
         ${unmatched}
-        ${d.browser_playable ? '' : '<div class="notice">This file\'s format may not play in a web browser yet (Couchside plays files directly; conversion is coming later). Try it, or use a player like VLC on the original file.</div>'}
+        ${d.browser_playable ? '' : '<div class="notice">Web browsers can\'t play this file\'s format as it is, so Couchside converts it while it plays (this needs FFmpeg).</div>'}
       </div></div></section>
     <dl class="tech">${tech}</dl>
     ${links ? `<p class="hint ext-links">More on ${links}${item.match_locked ? ' · match chosen by hand' : ''}</p>` : ''}`;
@@ -779,7 +779,23 @@ function fmtClock(seconds) {
 
 // ----- Playback: what this device can play, and repackaged (HLS) streams -----
 
-const PLAY_MODES = { direct_play: 'Direct play', remux: 'Repackaging', audio_convert: 'Converting audio' };
+const PLAY_MODES = { direct_play: 'Direct play', remux: 'Repackaging', audio_convert: 'Converting audio', transcode: 'Converting video' };
+const VIDEO_ENCODERS = {
+  gpu: 'Video conversion: NVIDIA GPU',
+  cpu: 'Video conversion: processor',
+  gpu_failed: 'Video conversion: processor (GPU failed)',
+  unavailable: 'Video conversion: needs FFmpeg',
+};
+const QUALITIES = [['auto', 'Auto'], ['original', 'Original'], ['1080p', '1080p'], ['720p', '720p'], ['480p', '480p']];
+
+// The quality chosen in the player, remembered per device.
+function savedQuality() {
+  try {
+    const q = localStorage.getItem('couchside.quality');
+    if (QUALITIES.some(pair => pair[0] === q)) return q;
+  } catch (e) { /* storage blocked: use the default */ }
+  return 'auto';
+}
 
 const isTv = () => /Tizen|SMART-TV|SmartTV|Web0S/i.test(navigator.userAgent);
 
@@ -814,8 +830,10 @@ function playbackProfile(video) {
   const pick = table => Object.keys(table).filter(name => can(table[name]));
   const containers = ['mp4'];
   if (can('video/webm')) containers.push('webm');
-  // Chrome plays most MKV files when they're served as WebM (Couchside does); TVs don't.
-  if (can('video/x-matroska') || (containers.includes('webm') && !isTv())) containers.push('mkv');
+  // Chrome plays most MKV files when they're served as WebM (Couchside does); TVs and
+  // Safari (every iPhone/iPad browser) don't.
+  const safari = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Android/.test(navigator.userAgent);
+  if (can('video/x-matroska') || (containers.includes('webm') && !isTv() && !safari)) containers.push('mkv');
   return {
     containers,
     video: pick({
@@ -874,12 +892,15 @@ async function playerPage(id, params) {
     `<track kind="subtitles" src="/api/v1/subtitles/${s.id}" label="${esc(s.label)}"${isLang(s.language) ? ` srclang="${esc(s.language)}"` : ''}>`).join('');
   const title = item.kind === 'episode' && d.show_title ? `${d.show_title} — ${epCode(item)} ${item.title}` : item.title;
   app.innerHTML = `<div class="player" id="player">
-      <div class="player-bar"><a class="btn small" href="#/item/${item.id}">← Back</a><span class="ptitle">${esc(title)}</span><span class="pmode" id="pmode" hidden></span></div>
+      <div class="player-bar"><a class="btn small" href="#/item/${item.id}">← Back</a><span class="ptitle">${esc(title)}</span><span class="pmode" id="pmode" hidden></span>
+        <select class="pquality" id="pquality" aria-label="Quality">${QUALITIES.map(pair => `<option value="${pair[0]}">${pair[1]}</option>`).join('')}</select></div>
       <video id="video" controls autoplay playsinline preload="metadata">${tracks}</video>
     </div>`;
   const player = app.querySelector('#player');
   const video = app.querySelector('#video');
   const modeLabel = app.querySelector('#pmode');
+  const qualityPick = app.querySelector('#pquality');
+  qualityPick.value = savedQuality();
   const resumeAt = params.get('resume') && item.progress && !item.progress.played ? item.progress.position_seconds : 0;
 
   let hls = null;
@@ -896,7 +917,7 @@ async function playerPage(id, params) {
   const formatText = () => `${item.video_codec || 'unknown'} / ${item.audio_codec || 'unknown'} in ${d.file_name.split('.').pop()}`;
   const cantPlay = () => {
     if (plan && plan.needs_video_conversion) {
-      showError('This video needs converting', `${plan.reason || ''} Couchside can't convert video yet (that's coming in a later update), so open the file in a player like VLC for now.`);
+      showError('This video needs converting', `${plan.reason || ''} Couchside converts video with FFmpeg, which it couldn't find (or the file hasn't been scanned yet). Install FFmpeg, or open the file in a player like VLC.`);
     } else {
       showError("Can't play this file", `The format (${formatText()}) didn't play here.${plan && plan.reason ? ` ${plan.reason}` : ''} Open the file in a player like VLC for now.`);
     }
@@ -916,7 +937,7 @@ async function playerPage(id, params) {
     plan = next;
     sessionId = next.session_id || null;
     modeLabel.hidden = false;
-    modeLabel.textContent = PLAY_MODES[next.mode] || '';
+    modeLabel.textContent = (PLAY_MODES[next.mode] || '') + (next.gpu ? ' (GPU)' : '');
     modeLabel.title = next.reason || '';
     if (next.mode === 'direct_play') {
       video.src = next.url;
@@ -941,14 +962,28 @@ async function playerPage(id, params) {
     }
   };
 
-  const request = directFailed => api(`/items/${item.id}/playback`, {
+  const request = (directFailed, startAt) => api(`/items/${item.id}/playback`, {
     method: 'POST',
     body: {
       profile: playbackProfile(video),
       device_id: deviceId(),
-      start_seconds: directFailed ? (video.currentTime || resumeAt) : resumeAt,
+      start_seconds: startAt,
       direct_failed: directFailed,
+      quality: qualityPick.value,
     },
+  });
+
+  // A new quality restarts playback where it is.
+  qualityPick.addEventListener('change', async () => {
+    try { localStorage.setItem('couchside.quality', qualityPick.value); } catch (e) { /* not remembered */ }
+    const at = video.currentTime || resumeAt;
+    triedFallback = false;
+    try {
+      await attach(await request(false, at), at);
+      video.play().catch(() => {});
+    } catch (e) {
+      showError("Can't change quality", e.message);
+    }
   });
 
   let lastSave = Date.now();
@@ -970,7 +1005,7 @@ async function playerPage(id, params) {
       triedFallback = true;
       const at = video.currentTime || resumeAt;
       try {
-        const next = await request(true);
+        const next = await request(true, at);
         if (next.mode !== 'direct_play') { await attach(next, at); return; }
         plan = next;
       } catch (e) {
@@ -1007,7 +1042,7 @@ async function playerPage(id, params) {
   };
 
   try {
-    await attach(await request(false), resumeAt);
+    await attach(await request(false, resumeAt), resumeAt);
   } catch (e) {
     if (e.status === 503) { showError('Too many videos playing', e.message); return; }
     // Couldn't ask the server how to play it: try the original file.
@@ -1285,6 +1320,8 @@ async function renderScanStatus() {
     features.innerHTML = `
       <span class="pill ${serverInfo.ffprobe ? 'ok' : 'warn'}">ffprobe ${serverInfo.ffprobe ? 'found' : 'not found'}</span>
       <span class="pill ${serverInfo.tmdb ? 'ok' : 'warn'}">TMDB ${serverInfo.tmdb ? 'enabled' : 'not configured'}</span>
+      <span class="pill ${serverInfo.video_encoder === 'gpu' || serverInfo.video_encoder === 'cpu' ? 'ok' : 'warn'}">${esc(VIDEO_ENCODERS[serverInfo.video_encoder] || 'Video conversion unknown')}</span>
+      ${serverInfo.video_encoder === 'gpu_failed' ? '<div>The NVIDIA card failed its test at startup, so video is converted on the processor (slower). See the log for details.</div>' : ''}
       ${serverInfo.ffprobe ? '' : '<div>Install FFmpeg (or put ffprobe.exe next to couchside.exe) to see durations and codecs.</div>'}
       ${serverInfo.tmdb ? '' : '<div>Add a free TMDB key in the Metadata section above for posters, titles and descriptions.</div>'}`;
   }

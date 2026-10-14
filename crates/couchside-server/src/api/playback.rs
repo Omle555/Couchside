@@ -1,4 +1,4 @@
-//! Choosing how to play an item, and serving repackaged streams as HLS.
+//! Choosing how to play an item, and serving repackaged and converted streams as HLS.
 
 use super::auth::AuthUser;
 use super::error::capitalize;
@@ -13,8 +13,9 @@ use axum::Json;
 use couchside_core::MediaId;
 use couchside_db::MediaItem;
 use couchside_transcode::{
-    decide, read_keyframes, segments, ClientProfile, Container, PlaybackDecision, PlaybackMode,
-    SourceInfo, StreamRequest,
+    decide, decide_after_direct_failure, fixed_segments, hdr_kind, output_height, read_keyframes,
+    segments as keyframe_segments, ClientProfile, Container, PlaybackDecision, PlaybackMode,
+    Quality, SourceInfo, StreamRequest, VideoEncode, VideoEncoder,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,9 @@ pub struct PlaybackRequest {
     /// The original file was tried and didn't play.
     #[serde(default)]
     pub direct_failed: bool,
+    /// The viewer's quality choice.
+    #[serde(default)]
+    pub quality: Quality,
 }
 
 /// How to play an item.
@@ -47,8 +51,10 @@ pub struct PlaybackDto {
     pub session_id: Option<String>,
     /// Why the file isn't played as it is.
     pub reason: Option<String>,
-    /// The video itself must be converted, which Couchside can't do yet.
+    /// The video must be converted but can't be (FFmpeg missing or the file not probed).
     pub needs_video_conversion: bool,
+    /// The video is converted on the NVIDIA GPU.
+    pub gpu: bool,
 }
 
 fn direct(item: &MediaItem, reason: Option<String>, needs_video_conversion: bool) -> PlaybackDto {
@@ -58,6 +64,7 @@ fn direct(item: &MediaItem, reason: Option<String>, needs_video_conversion: bool
         session_id: None,
         reason,
         needs_video_conversion,
+        gpu: false,
     }
 }
 
@@ -69,8 +76,8 @@ fn reason_text(decision: &PlaybackDecision, direct_failed: bool) -> Option<Strin
     (!parts.is_empty()).then(|| capitalize(&parts.join("; ")))
 }
 
-/// `POST /items/{id}/playback` — picks direct play, remux or audio convert and starts the
-/// stream if one is needed.
+/// `POST /items/{id}/playback` — picks direct play, remux, audio convert or transcode and
+/// starts the stream if one is needed.
 pub async fn start(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -89,41 +96,55 @@ pub async fn start(
         streams: &streams,
         height: item.height,
     };
-    let decision = decide(&source, &req.profile);
-    let mut mode = decision.mode;
-    if req.direct_failed && mode == PlaybackMode::DirectPlay {
-        mode = PlaybackMode::Remux;
-    }
-    let forced = req.direct_failed && decision.mode == PlaybackMode::DirectPlay;
+    let profile = req.quality.apply(&req.profile);
+    let first = decide(&source, &profile);
+    let forced = req.direct_failed && first.mode == PlaybackMode::DirectPlay;
+    let decision = if forced {
+        decide_after_direct_failure(&source, &profile)
+    } else {
+        first
+    };
+    let mode = decision.mode;
     let reason = reason_text(&decision, forced);
-    match mode {
-        PlaybackMode::DirectPlay => return Ok(Json(direct(&item, None, false))),
-        PlaybackMode::Transcode => return Ok(Json(direct(&item, reason, true))),
-        PlaybackMode::Remux | PlaybackMode::AudioConvert => {}
+    if mode == PlaybackMode::DirectPlay {
+        return Ok(Json(direct(&item, None, false)));
     }
-    let (Some(ffprobe), Some(video_stream), Some(duration)) = (
-        state.ffprobe.as_ref(),
-        decision.video_stream,
-        item.runtime_seconds,
-    ) else {
-        tracing::info!(
-            item = id,
-            "can't repackage without ffprobe and probed media info"
-        );
-        return Ok(Json(direct(&item, reason, false)));
+    let transcode = mode == PlaybackMode::Transcode;
+    let (Some(video_stream), Some(duration)) = (decision.video_stream, item.runtime_seconds) else {
+        tracing::info!(item = id, "can't convert without probed media info");
+        return Ok(Json(direct(&item, reason, transcode)));
     };
     if !state.transcoder.available() {
-        return Ok(Json(direct(&item, reason, false)));
+        return Ok(Json(direct(&item, reason, transcode)));
     }
 
-    let keyframes = match state.db.keyframes(item.id).await? {
-        Some(times) => times,
-        None => {
-            let times = read_keyframes(ffprobe.path(), &path).await?;
-            state.db.set_keyframes(item.id, &times).await?;
-            times
-        }
+    let (segments, video) = if transcode {
+        let hdr = streams
+            .iter()
+            .find(|s| s.stream_index == video_stream)
+            .and_then(hdr_kind);
+        let video = VideoEncode {
+            height: output_height(item.height, &profile),
+            source_height: item.height,
+            hdr,
+        };
+        (fixed_segments(duration), Some(video))
+    } else {
+        let Some(ffprobe) = state.ffprobe.as_ref() else {
+            tracing::info!(item = id, "can't repackage without ffprobe");
+            return Ok(Json(direct(&item, reason, false)));
+        };
+        let keyframes = match state.db.keyframes(item.id).await? {
+            Some(times) => times,
+            None => {
+                let times = read_keyframes(ffprobe.path(), &path).await?;
+                state.db.set_keyframes(item.id, &times).await?;
+                times
+            }
+        };
+        (keyframe_segments(&keyframes, duration), None)
     };
+    let gpu = transcode && state.transcoder.video_encoder() == VideoEncoder::Gpu;
     let mut raw = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut raw);
     let session_id = hex::encode(raw);
@@ -135,12 +156,13 @@ pub async fn start(
             device_id: req.device_id.chars().take(64).collect(),
             input: PathBuf::from(&path),
             mode,
+            video,
             video_stream,
             hevc: streams
                 .iter()
                 .any(|s| s.stream_index == video_stream && s.codec.as_deref() == Some("hevc")),
             audio_stream: decision.audio_stream,
-            segments: segments(&keyframes, duration),
+            segments,
             start_seconds: req.start_seconds.max(0.0),
         })
         .await?;
@@ -150,6 +172,7 @@ pub async fn start(
         session_id: Some(session_id),
         reason,
         needs_video_conversion: false,
+        gpu,
     }))
 }
 

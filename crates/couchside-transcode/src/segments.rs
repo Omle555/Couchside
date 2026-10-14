@@ -116,6 +116,27 @@ pub fn segments(keyframes_ms: &[i64], duration: f64) -> Vec<Segment> {
         .collect()
 }
 
+/// Length of a segment when video is re-encoded: ffmpeg is told to put a keyframe every
+/// this many seconds, so the segments are known from the runtime alone.
+pub const SEGMENT_SECONDS: f64 = 6.0;
+
+/// A last segment shorter than this joins the one before. The runtime often runs a moment past
+/// the last video frame (the sound is a little longer), and a segment there would never be
+/// written.
+const MIN_LAST_SEGMENT_MS: i64 = 1000;
+
+/// The segments of a re-encoded video `duration` seconds long: [`SEGMENT_SECONDS`] each,
+/// the last one between one and seven seconds.
+pub fn fixed_segments(duration: f64) -> Vec<Segment> {
+    let step_ms = (SEGMENT_SECONDS * 1000.0) as i64;
+    let limit = ((duration * 1000.0) as i64 - MIN_LAST_SEGMENT_MS).max(1);
+    let keyframes: Vec<i64> = (0..)
+        .map(|n| n * step_ms)
+        .take_while(|&ms| ms < limit)
+        .collect();
+    segments(&keyframes, duration)
+}
+
 /// Where to point ffmpeg's `-ss` so it starts exactly on segment `index`.
 pub fn seek_time(segments: &[Segment], index: usize) -> Option<f64> {
     let seg = segments.get(index)?;
@@ -168,6 +189,22 @@ mod tests {
         // Keyframes past the end are ignored.
         assert_eq!(segments(&[0, 3000, 12000], 10.0).len(), 2);
         assert!(segments(&[], 10.0).is_empty());
+    }
+
+    #[test]
+    fn fixed_segments_are_six_seconds() {
+        let segs = fixed_segments(20.0);
+        assert_eq!(segs.len(), 4);
+        assert_eq!(segs[1].start, 6.0);
+        assert_eq!(segs[2].duration, 6.0);
+        assert!((segs[3].duration - 2.0).abs() < 1e-9);
+        assert_eq!(fixed_segments(12.0).len(), 2);
+        assert!(fixed_segments(0.0).is_empty());
+        assert_eq!(fixed_segments(0.5).len(), 1);
+        // A 0.09 s tail joins the last segment instead of becoming one nobody can write.
+        let film = fixed_segments(90.09);
+        assert_eq!(film.len(), 15);
+        assert!((film[14].duration - 6.09).abs() < 1e-9);
     }
 
     #[test]

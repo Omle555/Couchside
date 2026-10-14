@@ -6,12 +6,16 @@
 //! server stops; a session's folder is deleted when the session ends (rule 7.6).
 
 use crate::decision::PlaybackMode;
+use crate::encode::{nvenc_works, VideoEncode};
 use crate::process::new_command;
 use crate::segments::{playlist, seek_time, Segment};
 use crate::temp::SESSION_DIR_PREFIX;
 use crate::TranscodeError;
+use couchside_core::config::HardwareAccel;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
@@ -41,6 +45,10 @@ pub struct ManagerSettings {
     pub temp_dir: PathBuf,
     /// Most remux / audio-convert sessions at once.
     pub max_remuxes: u32,
+    /// Most full transcodes at once.
+    pub max_transcodes: u32,
+    /// Hardware that encodes video.
+    pub hardware: HardwareAccel,
     /// Bytes the session folders may use before idle sessions are ended.
     pub temp_max_bytes: u64,
 }
@@ -56,8 +64,10 @@ pub struct StreamRequest {
     pub device_id: String,
     /// The video file.
     pub input: PathBuf,
-    /// Remux or audio convert.
+    /// Remux, audio convert or transcode.
     pub mode: PlaybackMode,
+    /// How to re-encode the video (transcode only; video is copied otherwise).
+    pub video: Option<VideoEncode>,
     /// ffprobe index of the video stream.
     pub video_stream: i64,
     /// The video is HEVC: tag it `hvc1`, the form browsers and TVs expect in MP4.
@@ -79,6 +89,8 @@ struct Encoder {
     done: Option<usize>,
     /// Last lines ffmpeg printed (errors only, as it runs with `-loglevel error`).
     errors: Arc<Mutex<String>>,
+    /// Encoding video on the GPU.
+    gpu: bool,
 }
 
 struct Session {
@@ -88,12 +100,30 @@ struct Session {
     encoder: tokio::sync::Mutex<Option<Encoder>>,
     last_access: Mutex<Instant>,
     init: tokio::sync::OnceCell<Vec<u8>>,
+    /// The GPU failed for this stream: encode on the processor from now on.
+    cpu_only: AtomicBool,
+}
+
+/// What encodes video when a file must be converted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoEncoder {
+    /// The NVIDIA GPU (NVENC).
+    Gpu,
+    /// The processor (x264), as configured.
+    Cpu,
+    /// The processor, because the NVIDIA GPU was switched on but failed its test.
+    GpuFailed,
+    /// Nothing: ffmpeg wasn't found.
+    Unavailable,
 }
 
 /// Starts, tracks and stops streaming sessions.
 pub struct TranscodeManager {
     settings: ManagerSettings,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// The NVENC self-test failed.
+    gpu_failed: AtomicBool,
     #[cfg(windows)]
     job: Option<crate::process::KillOnCloseJob>,
 }
@@ -126,17 +156,29 @@ impl Session {
             .unwrap_or(0)
     }
 
-    /// ffmpeg arguments to write segments from `start` on.
-    fn ffmpeg_args(&self, start: usize) -> Vec<String> {
+    /// ffmpeg arguments to write segments from `start` on, encoding video on the GPU if `gpu`.
+    fn ffmpeg_args(&self, start: usize, gpu: bool) -> Vec<String> {
+        let video = self.req.video.as_ref();
         let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"]
             .map(String::from)
             .to_vec();
-        if start > 0 {
-            let at = seek_time(&self.req.segments, start).unwrap_or_default();
-            args.extend(["-ss".into(), format!("{at:.3}"), "-noaccurate_seek".into()]);
+        if let Some(v) = video {
+            args.extend(v.input_args(gpu));
         }
-        // Read ahead quickly at first, then at four times real time.
-        args.extend(["-readrate", "4", "-readrate_initial_burst", "30"].map(String::from));
+        if start > 0 {
+            if video.is_some() {
+                // Re-encoding can start on any frame, so seek exactly to the segment start.
+                let at = self.req.segments.get(start).map_or(0.0, |s| s.start);
+                args.extend(["-ss".into(), format!("{at:.3}")]);
+            } else {
+                let at = seek_time(&self.req.segments, start).unwrap_or_default();
+                args.extend(["-ss".into(), format!("{at:.3}"), "-noaccurate_seek".into()]);
+            }
+        }
+        // Read ahead quickly at first, then a little faster than playback (converting video
+        // is costly) or at four times real time (copying is cheap).
+        let rate = if video.is_some() { "1.5" } else { "4" };
+        args.extend(["-readrate", rate, "-readrate_initial_burst", "30"].map(String::from));
         args.push("-i".into());
         args.push(self.req.input.to_string_lossy().into_owned());
         // Keep the file's own timestamps so segments from different runs line up.
@@ -145,9 +187,14 @@ impl Session {
         if let Some(audio) = self.req.audio_stream {
             args.extend(["-map".into(), format!("0:{audio}")]);
         }
-        args.extend(["-c:v", "copy"].map(String::from));
-        if self.req.hevc {
-            args.extend(["-tag:v", "hvc1"].map(String::from));
+        match video {
+            Some(v) => args.extend(v.args(gpu)),
+            None => {
+                args.extend(["-c:v", "copy"].map(String::from));
+                if self.req.hevc {
+                    args.extend(["-tag:v", "hvc1"].map(String::from));
+                }
+            }
         }
         match self.req.mode {
             PlaybackMode::Remux => args.extend(["-c:a", "copy"].map(String::from)),
@@ -161,13 +208,18 @@ impl Session {
                 "4096",
                 "-f",
                 "hls",
-                // Cut at every keyframe: see `segments.rs`.
+                // Cut at every keyframe: see `segments.rs` and `encode.rs`.
                 "-hls_time",
                 "0.001",
                 "-hls_segment_type",
                 "fmp4",
                 "-hls_fmp4_init_filename",
                 "init.mp4",
+                // Fragment times from the file's own timestamps, not from where this ffmpeg
+                // started: a restarted ffmpeg's segments then fit the init segment the player
+                // already has (served once per session).
+                "-hls_segment_options",
+                "movflags=+frag_discont",
                 "-hls_flags",
                 "temp_file",
                 "-hls_list_size",
@@ -202,6 +254,11 @@ impl Encoder {
         matches!(self.child.try_wait(), Ok(None))
     }
 
+    /// ffmpeg reached the end of the file without an error.
+    fn finished(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(status)) if status.success())
+    }
+
     fn errors(&self) -> String {
         lock(&self.errors).trim().to_string()
     }
@@ -213,6 +270,7 @@ impl TranscodeManager {
         let manager = Arc::new(Self {
             settings,
             sessions: Mutex::new(HashMap::new()),
+            gpu_failed: AtomicBool::new(false),
             #[cfg(windows)]
             job: match crate::process::KillOnCloseJob::new() {
                 Ok(job) => Some(job),
@@ -229,6 +287,35 @@ impl TranscodeManager {
     /// Whether streams can be repackaged at all (ffmpeg was found).
     pub fn available(&self) -> bool {
         self.settings.ffmpeg.is_some()
+    }
+
+    /// What encodes video for new streams.
+    pub fn video_encoder(&self) -> VideoEncoder {
+        match (self.available(), self.settings.hardware) {
+            (false, _) => VideoEncoder::Unavailable,
+            (true, HardwareAccel::None) => VideoEncoder::Cpu,
+            (true, HardwareAccel::Nvenc) if self.gpu_failed.load(Ordering::Relaxed) => {
+                VideoEncoder::GpuFailed
+            }
+            (true, HardwareAccel::Nvenc) => VideoEncoder::Gpu,
+        }
+    }
+
+    /// Tests the NVIDIA encoder once when it is switched on; if it fails, video is converted
+    /// on the processor instead.
+    pub async fn check_gpu(&self) {
+        let Some(ffmpeg) = &self.settings.ffmpeg else {
+            return;
+        };
+        if self.settings.hardware != HardwareAccel::Nvenc {
+            return;
+        }
+        if nvenc_works(ffmpeg).await {
+            tracing::info!("NVIDIA video encoder ready");
+        } else {
+            tracing::warn!("NVIDIA video encoder unavailable; converting video on the processor");
+            self.gpu_failed.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Starts a session and its ffmpeg. Ends the device's previous session first.
@@ -252,8 +339,17 @@ impl TranscodeManager {
         for id in replaced {
             self.stop(&id).await;
         }
-        let limit = self.settings.max_remuxes;
-        if lock(&self.sessions).len() >= usize::try_from(limit).unwrap_or(usize::MAX) {
+        let transcode = req.video.is_some();
+        let limit = if transcode {
+            self.settings.max_transcodes
+        } else {
+            self.settings.max_remuxes
+        };
+        let running = lock(&self.sessions)
+            .values()
+            .filter(|s| s.req.video.is_some() == transcode)
+            .count();
+        if running >= usize::try_from(limit).unwrap_or(usize::MAX) {
             return Err(TranscodeError::Busy(limit));
         }
 
@@ -269,6 +365,7 @@ impl TranscodeManager {
             encoder: tokio::sync::Mutex::new(None),
             last_access: Mutex::new(Instant::now()),
             init: tokio::sync::OnceCell::new(),
+            cpu_only: AtomicBool::new(false),
         });
         let first = session.first_segment();
         {
@@ -291,10 +388,13 @@ impl TranscodeManager {
         session: &Session,
         start: usize,
     ) -> Result<Encoder, TranscodeError> {
+        let gpu = session.req.video.is_some()
+            && self.video_encoder() == VideoEncoder::Gpu
+            && !session.cpu_only.load(Ordering::Relaxed);
         let mut cmd = new_command(ffmpeg);
         cmd.current_dir(&session.dir)
             .stdout(std::process::Stdio::null())
-            .args(session.ffmpeg_args(start));
+            .args(session.ffmpeg_args(start, gpu));
         let mut child = cmd.spawn()?;
         #[cfg(windows)]
         if let Some(job) = &self.job {
@@ -324,12 +424,13 @@ impl TranscodeManager {
                 }
             });
         }
-        tracing::debug!(session = %session.req.session_id, start, "ffmpeg started");
+        tracing::debug!(session = %session.req.session_id, start, gpu, "ffmpeg started");
         Ok(Encoder {
             child,
             start,
             done: None,
             errors,
+            gpu,
         })
     }
 
@@ -417,12 +518,28 @@ impl TranscodeManager {
                 return Ok(());
             }
             if near && n == next {
-                // ffmpeg stopped right before this segment: it failed, and would again.
                 if session.segment_path(n).is_file() {
                     return Ok(());
                 }
+                if enc.finished() {
+                    // The file ended before this segment (its last moments held no frame).
+                    return Err(TranscodeError::NotFound);
+                }
+                // ffmpeg stopped right before this segment: it failed, and would again.
                 let errors = enc.errors();
+                let enc_was_gpu = enc.gpu;
                 *slot = None;
+                if enc_was_gpu {
+                    // Rule 7.5: the same job again on the processor.
+                    tracing::warn!(
+                        session = %session.req.session_id,
+                        error = %errors,
+                        "NVIDIA encoder failed; converting on the processor instead"
+                    );
+                    session.cpu_only.store(true, Ordering::Relaxed);
+                    *slot = Some(self.spawn(&ffmpeg, session, n)?);
+                    return Ok(());
+                }
                 return Err(TranscodeError::Failed(if errors.is_empty() {
                     "ffmpeg stopped early".into()
                 } else {

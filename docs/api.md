@@ -23,7 +23,7 @@ from 0). If start-up fails, `error` is `"start_failed"` for a few seconds before
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | none | `{ status, version }` |
-| GET | `/setup` | none | `{ needs_setup, version, ffprobe, ffmpeg, tmdb }` |
+| GET | `/setup` | none | `{ needs_setup, version, ffprobe, ffmpeg, tmdb, video_encoder }`; `video_encoder` is `gpu`, `cpu`, `gpu_failed` (NVENC switched on but failed its startup test, so the processor is used) or `unavailable` (no ffmpeg) |
 | POST | `/setup` | none | `{ username, password }` creates the first admin (only when no users exist) |
 | POST | `/auth/login` | none | `{ username, password }` → `{ token, user }` |
 | POST | `/auth/logout` | any | Ends the session |
@@ -78,10 +78,10 @@ Pages look like `{ items, total, limit, offset }`. `limit` defaults to 100 (max 
 | GET | `/shows/{id}/image/poster\|backdrop` | user | Cached show artwork |
 | GET | `/subtitles/{id}` | user | External subtitle converted to WebVTT |
 
-### Playback and repackaged streams
+### Playback, repackaged and converted streams
 
 `POST /items/{id}/playback` decides how the item plays on the calling device and, when the
-file must be repackaged, starts a stream. Body:
+file must be repackaged or converted, starts a stream. Body:
 
 ```json
 {
@@ -94,7 +94,8 @@ file must be repackaged, starts a stream. Body:
   },
   "device_id": "random id kept by the browser",
   "start_seconds": 0,
-  "direct_failed": false
+  "direct_failed": false,
+  "quality": "auto"
 }
 ```
 
@@ -102,14 +103,20 @@ Format names: containers `mp4`, `webm`, `mkv`; video `h264`, `h264_high10`, `hev
 `hevc_main10`, `vp9`, `av1`; audio `aac`, `mp3`, `opus`, `vorbis`, `flac`, `ac3`, `eac3`, `dts`,
 `truehd`. Unknown names are ignored. `tv_mode` limits the device to H.264 and AAC/MP3 in MP4 at
 up to 1080p. `direct_failed: true` means the original file was tried and didn't play.
+`quality` is the viewer's choice: `auto` (the profile's `max_height`), `original` (no height
+limit), `1080p`, `720p` or `480p`; a limit below the video's height converts it down.
 
-Response: `{ "mode", "url", "session_id", "reason", "needs_video_conversion" }`. `mode` is
-`direct_play` (load `url`, the original file), `remux` (video and audio copied) or
-`audio_convert` (video copied, audio converted to stereo AAC); the last two return an HLS
-playlist `url` and a `session_id`. When the video itself would need converting (not available
-yet), `mode` is `direct_play` and `needs_video_conversion` is true. `reason` explains, in plain
-words, why the file isn't played as it is. 503 `busy` when `[transcode] max_remuxes` streams are
-already running. A new stream from the same `device_id` ends that device's previous one.
+Response: `{ "mode", "url", "session_id", "reason", "needs_video_conversion", "gpu" }`. `mode`
+is `direct_play` (load `url`, the original file), `remux` (video and audio copied),
+`audio_convert` (video copied, audio converted to stereo AAC) or `transcode` (video converted to
+H.264 8-bit, scaled down and HDR tone-mapped as needed, audio to stereo AAC); the last three
+return an HLS playlist `url` and a `session_id`. `gpu` is true when the video is converted on
+the NVIDIA GPU. Converted streams have fixed 6-second segments. When the video needs converting
+but can't be (no ffmpeg, or the file hasn't been probed), `mode` is `direct_play` and
+`needs_video_conversion` is true. `reason` explains, in plain words, why the file isn't played
+as it is. 503 `busy` when `[transcode] max_remuxes` repackaged or `max_transcodes` converted
+streams are already running. A new stream from the same `device_id` ends that device's previous
+one.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|

@@ -23,6 +23,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiErr
         "ffprobe": state.manager.has_ffprobe(),
         "ffmpeg": state.title_scanner.available(),
         "tmdb": state.manager.has_tmdb(),
+        "video_encoder": state.transcoder.video_encoder(),
     })))
 }
 

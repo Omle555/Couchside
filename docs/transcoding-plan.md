@@ -1,6 +1,6 @@
 # Transcoding plan
 
-Status: **agreed** (2026-10-14). Phases 0 and 1 are built. LJ's answers to the open questions
+Status: **agreed** (2026-10-14). Phases 0, 1 and 2 are built (notes on Phase 2 at the end). LJ's answers to the open questions
 are recorded at the end.
 
 ## 1. Where we are today
@@ -234,3 +234,21 @@ folder. Manual check on the Samsung TV and a phone before each phase is called d
 6. **Crash safety:** enable `Win32_System_JobObjects` on the existing `windows` crate (approved).
 7. **TV:** Samsung from roughly 2019–2022 (Tizen 5–6.5). TV mode stays H.264/AAC by default;
    whether HEVC can go direct to it gets tested on the TV in Phase 2 before it's allowed.
+
+## 12. Phase 2 as built (2026-10-14)
+
+- Full transcodes use fixed 6 s segments: ffmpeg forces a keyframe every 6 s counted from where
+  it started (always a segment start) and adds no other keyframes (no scene-cut, long GOP), so
+  segment `n` always starts at `6n` s. A restart seeks exactly (`-ss` without
+  `-noaccurate_seek`).
+- GPU path: `-hwaccel cuda` decode (ffmpeg falls back to software decoding for formats NVDEC
+  can't do, such as 10-bit H.264), scaling and tone mapping on the processor, `h264_nvenc`.
+  If NVENC fails in a stream, that stream restarts on x264 at the same segment. The startup
+  self-test result shows in Settings → Server.
+- HDR (PQ/HLG) on the GPU decodes through Vulkan and is scaled and tone-mapped by `libplacebo`
+  (hable) on the card: about 8x real time for 4K to 1080p on the RTX 3070, where `zscale` +
+  `tonemap` on the i7-7700K managed only 0.9x. The processor path keeps `zscale` + `tonemap`
+  (too slow for 4K HDR in real time; it only runs if the GPU fails).
+- Quality "Auto" uses the device's own limit, which today is only TV mode's 1080p; phones and
+  PCs get the original size when they can play it.
+- `max_transcodes` and `max_remuxes` are counted separately.
