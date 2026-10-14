@@ -1,10 +1,16 @@
 # Changelog
 
-All notable changes to Solidfin are documented here.
+All notable changes to Couchside are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+### Changed
+- Renamed the project from Solidfin to Couchside: crates (`couchside-*`), `couchside.exe`, the
+  Windows service and firewall rule, the web UI, the session cookie and the default data folder
+  (`%ProgramData%\Couchside`). On start, an existing `%ProgramData%\Solidfin` folder is moved to
+  the new location and `solidfin.db` is renamed to `couchside.db`. Users must sign in again.
 
 ### Added
 - Folder watching: library folders are watched for added, removed and renamed files, and only
@@ -13,11 +19,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   (default 10) and no video in it is still being copied. On by default; new
   `[scan] watch_folders` and `[scan] watch_delay_seconds` settings. Offline drives and shares
   are retried every minute, and new or removed libraries are picked up straight away
-- Start-up splash screen in the web UI: the Solidfin logo, a thin progress bar that follows
+- Start-up splash screen in the web UI: the Couchside logo, a thin progress bar that follows
   the real start-up steps (connecting, signing in, loading the first page) and a short status
   line, then a fade into the app. If the server is still starting it waits and retries instead
   of showing an error. No extra files or libraries; honours "reduce motion"
-- The splash now opens as soon as `solidfin.exe` starts: the port opens first and the splash
+- The splash now opens as soon as `couchside.exe` starts: the port opens first and the splash
   shows each start-up step (opening the database, looking for FFmpeg, loading settings,
   starting the library) before the app takes over. If start-up fails, the page says so
 - Thin progress bar along the top of every page while a library scan runs; `GET /scan` now
@@ -42,7 +48,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   and every rename is listed in `logs\renames.log`
 - "Delete" button on a movie's page (when file changes are allowed): sends the movie's folder,
   or just its own files in a shared folder, to the Recycle Bin after showing exactly what goes,
-  and removes it from Solidfin
+  and removes it from Couchside
 - TMDB key and language can be set (and are validated) under Settings → Metadata
 - Database migration 0002 (existing movies are re-matched once with the new matcher)
 - `[server] lan_only` setting (on by default): only devices on the local network and this PC can

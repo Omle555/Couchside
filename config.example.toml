@@ -1,6 +1,6 @@
-# Solidfin configuration (example with every setting and its default).
-# The real file lives at C:\ProgramData\Solidfin\config.toml and is created on first run.
-# Restart Solidfin after editing. Use 'single quotes' for Windows paths.
+# Couchside configuration (example with every setting and its default).
+# The real file lives at C:\ProgramData\Couchside\config.toml and is created on first run.
+# Restart Couchside after editing. Use 'single quotes' for Windows paths.
 
 [server]
 # 127.0.0.1 = only this PC can connect. 0.0.0.0 = other devices on your network too.
@@ -13,14 +13,14 @@ lan_only = true
 
 [paths]
 # Where the database, image cache and logs are stored.
-# Default: C:\ProgramData\Solidfin
-# data_dir = 'D:\SolidfinData'
+# Default: C:\ProgramData\Couchside
+# data_dir = 'D:\CouchsideData'
 
 [ffmpeg]
-# Full path to ffprobe.exe. Default: next to solidfin.exe, then ffmpeg\bin\ next to it, then PATH.
+# Full path to ffprobe.exe. Default: next to couchside.exe, then ffmpeg\bin\ next to it, then PATH.
 # ffprobe_path = 'C:\ffmpeg\bin\ffprobe.exe'
 # Full path to ffmpeg.exe, used by "Scan video for title" in Identify.
-# Default: next to ffprobe.exe, next to solidfin.exe, then ffmpeg\bin\ next to it, then PATH.
+# Default: next to ffprobe.exe, next to couchside.exe, then ffmpeg\bin\ next to it, then PATH.
 # ffmpeg_path = 'C:\ffmpeg\bin\ffmpeg.exe'
 
 [metadata]
@@ -33,7 +33,7 @@ language = "en-US"
 [scan]
 # Minutes between automatic rescans (0 = only scan on startup or when asked).
 interval_minutes = 60
-# Scan all libraries when Solidfin starts.
+# Scan all libraries when Couchside starts.
 scan_on_startup = true
 # true = watch library folders and update the library as soon as files are added, removed or
 # renamed (only the changed movie or show folder is rescanned). Works on local drives, USB
@@ -53,6 +53,6 @@ watch_delay_seconds = 10
 # to it. You always see the old and new names before anything changes, nothing is ever
 # overwritten, and watch progress is kept. Every rename is listed in logs\renames.log
 # (inside the data folder) so it can be undone by hand.
-# false = Solidfin never renames, moves or changes your files.
+# false = Couchside never renames, moves or changes your files.
 # The "Allow file renames" switch in Settings → Libraries overrides this once it has been used.
 allow_file_renames = false

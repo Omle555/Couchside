@@ -7,13 +7,13 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/your-name/solidfin"
+repository = "https://github.com/your-name/couchside"
 
 [workspace.dependencies]
-solidfin-core = { path = "crates/solidfin-core" }
-solidfin-db = { path = "crates/solidfin-db" }
-solidfin-library = { path = "crates/solidfin-library" }
-solidfin-metadata = { path = "crates/solidfin-metadata" }
+couchside-core = { path = "crates/couchside-core" }
+couchside-db = { path = "crates/couchside-db" }
+couchside-library = { path = "crates/couchside-library" }
+couchside-metadata = { path = "crates/couchside-metadata" }
 
 anyhow = "1"
 argon2 = "0.5"

@@ -1,0 +1,17 @@
+[package]
+name = "couchside-db"
+description = "SQLite storage for Couchside"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+couchside-core = { workspace = true, features = ["sqlx"] }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

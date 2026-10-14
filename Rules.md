@@ -1,6 +1,6 @@
-# Solidfin — Project Rules
+# Couchside — Project Rules
 
-Solidfin is a Windows-first, self-hosted movie and TV media server (in the spirit of Jellyfin and Plex), written in Rust. These rules apply to all code, docs and contributions in this repository — including work done by AI assistants.
+Couchside is a Windows-first, self-hosted movie and TV media server (in the spirit of Jellyfin and Plex), written in Rust. These rules apply to all code, docs and contributions in this repository — including work done by AI assistants.
 
 When a rule here conflicts with a convenience, the rule wins. When a rule is wrong, change this file in its own commit with a reason.
 
@@ -27,15 +27,15 @@ When a rule here conflicts with a convenience, the rule wins. When a rule is wro
 2. **Edition 2021** (or newer once adopted project-wide — never mixed).
 3. Target `x86_64-pc-windows-msvc`. Do not depend on MinGW/GNU toolchains.
 4. Use a **Cargo workspace** with focused crates, for example:
-   - `solidfin-server` — binary, wiring, config, startup
-   - `solidfin-api` — HTTP routes and DTOs
-   - `solidfin-library` — scanning, file watching, naming parsers
-   - `solidfin-metadata` — external metadata providers
-   - `solidfin-transcode` — FFmpeg integration
-   - `solidfin-db` — database schema, migrations, queries
-   - `solidfin-core` — shared types and errors
-5. Crates depend inward on `solidfin-core`; no circular dependencies.
-6. Current layout (v0.1): `solidfin-api` lives as the `api` module inside `solidfin-server`, and `solidfin-transcode` will be added with transcoding (see `docs/adr/0001-architecture.md`).
+   - `couchside-server` — binary, wiring, config, startup
+   - `couchside-api` — HTTP routes and DTOs
+   - `couchside-library` — scanning, file watching, naming parsers
+   - `couchside-metadata` — external metadata providers
+   - `couchside-transcode` — FFmpeg integration
+   - `couchside-db` — database schema, migrations, queries
+   - `couchside-core` — shared types and errors
+5. Crates depend inward on `couchside-core`; no circular dependencies.
+6. Current layout (v0.1): `couchside-api` lives as the `api` module inside `couchside-server`, and `couchside-transcode` will be added with transcoding (see `docs/adr/0001-architecture.md`).
 
 ## 3. Approved core stack
 
@@ -45,7 +45,7 @@ Changing any of these requires a written reason in the PR.
 |---|---|
 | Async runtime | `tokio` |
 | HTTP server | `axum` (+ `tower`, `tower-http`) |
-| Database | SQLite via `sqlx` (parameterized runtime queries, each covered by tests; migrations in `crates/solidfin-db/migrations/`; see ADR 0001) |
+| Database | SQLite via `sqlx` (parameterized runtime queries, each covered by tests; migrations in `crates/couchside-db/migrations/`; see ADR 0001) |
 | Serialization | `serde`, `serde_json` |
 | Config | TOML via `serde` + `toml` |
 | Logging/tracing | `tracing`, `tracing-subscriber`, rolling file logs |
@@ -83,10 +83,10 @@ Changing any of these requires a written reason in the PR.
 3. Support **UNC/network shares** (`\\NAS\Movies`) and mapped drives as library roots.
 4. File comparisons are **case-insensitive** on Windows.
 5. Default data locations:
-   - Program data: `%ProgramData%\Solidfin\` (database, cache, logs, transcodes)
-   - Config: `%ProgramData%\Solidfin\config.toml`
+   - Program data: `%ProgramData%\Couchside\` (database, cache, logs, transcodes)
+   - Config: `%ProgramData%\Couchside\config.toml`
    - Never write into the install directory or the user's media folders.
-6. **Never modify, move or delete user media files.** Solidfin is read-only against libraries, with one opt-in exception: "Clean up" may rename a movie file (and the subtitle, NFO and artwork files named after it) to the standard layout in 8.1, and move the images and subtitles in the movie's folder (only its own ones when the folder holds other movies; never a video file) into `%ProgramData%\Solidfin\removed\` instead of deleting them; and "Delete" may send a movie's own folder (or, in a shared folder, only the movie and the files named after it) to the Recycle Bin, only when file changes are allowed ("Allow file renames and deletes" in Settings or `[library] allow_file_renames = true`; off by default), only after showing the old and new names, never overwriting anything, never leaving the library root, keeping watch progress, listing every rename and removal in the preview, and logging each one to `logs\renames.log` so it can be undone. Artwork/NFO writing, if ever added, must be opt-in too. *(Changed 2026-10-13 at the owner's request: tidy names were wanted and an off-by-default setting with a preview keeps files safe from a bad match. Image and subtitle removal and the Delete button added the same day at the owner's request, both recoverable: a move and the Recycle Bin.)*
+6. **Never modify, move or delete user media files.** Couchside is read-only against libraries, with one opt-in exception: "Clean up" may rename a movie file (and the subtitle, NFO and artwork files named after it) to the standard layout in 8.1, and move the images and subtitles in the movie's folder (only its own ones when the folder holds other movies; never a video file) into `%ProgramData%\Couchside\removed\` instead of deleting them; and "Delete" may send a movie's own folder (or, in a shared folder, only the movie and the files named after it) to the Recycle Bin, only when file changes are allowed ("Allow file renames and deletes" in Settings or `[library] allow_file_renames = true`; off by default), only after showing the old and new names, never overwriting anything, never leaving the library root, keeping watch progress, listing every rename and removal in the preview, and logging each one to `logs\renames.log` so it can be undone. Artwork/NFO writing, if ever added, must be opt-in too. *(Changed 2026-10-13 at the owner's request: tidy names were wanted and an off-by-default setting with a preview keeps files safe from a bad match. Image and subtitle removal and the Delete button added the same day at the owner's request, both recoverable: a move and the Recycle Bin.)*
 7. The server must run both as a console app (for development) and as a Windows Service.
 8. Respect Windows Firewall — the installer requests a rule only for the configured port.
 
@@ -176,7 +176,7 @@ Changing any of these requires a written reason in the PR.
 
 ## 17. Documentation
 
-1. `README.md` covers: what Solidfin is, install, first run, adding a library, building from source.
+1. `README.md` covers: what Couchside is, install, first run, adding a library, building from source.
 2. Architecture decisions are recorded as short ADRs in `docs/adr/NNNN-title.md`.
 3. User-facing settings are documented next to their defaults in `config.example.toml`.
 

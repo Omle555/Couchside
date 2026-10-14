@@ -211,6 +211,80 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "couchside-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sqlx",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "couchside-db"
+version = "0.1.0"
+dependencies = [
+ "couchside-core",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "couchside-library"
+version = "0.1.0"
+dependencies = [
+ "couchside-core",
+ "couchside-db",
+ "notify",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "couchside-metadata"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "couchside-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "couchside-core",
+ "couchside-db",
+ "couchside-library",
+ "couchside-metadata",
+ "hex",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "windows",
+ "windows-service",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1652,80 +1726,6 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "solidfin-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "sqlx",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "solidfin-db"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "solidfin-core",
- "sqlx",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "solidfin-library"
-version = "0.1.0"
-dependencies = [
- "notify",
- "serde",
- "serde_json",
- "solidfin-core",
- "solidfin-db",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "solidfin-metadata"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "solidfin-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "hex",
- "rand 0.8.8",
- "serde",
- "serde_json",
- "sha2",
- "solidfin-core",
- "solidfin-db",
- "solidfin-library",
- "solidfin-metadata",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "windows",
- "windows-service",
 ]
 
 [[package]]

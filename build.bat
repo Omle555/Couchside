@@ -1,9 +1,9 @@
 @echo off
-rem Checks formatting, lints and tests Solidfin, then builds it.
+rem Checks formatting, lints and tests Couchside, then builds it.
 rem All compiler output is saved to build-log.txt.
 cd /d "%~dp0"
 echo.
-echo Checking Solidfin (the first run downloads libraries and can take 5-10 minutes)...
+echo Checking Couchside (the first run downloads libraries and can take 5-10 minutes)...
 echo.
 
 echo [1/4] Checking formatting (cargo fmt --check)...
@@ -41,8 +41,8 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo Build succeeded: target\release\solidfin.exe
-echo Starting Solidfin...
+echo Build succeeded: target\release\couchside.exe
+echo Starting Couchside...
 echo.
-target\release\solidfin.exe
+target\release\couchside.exe
 pause

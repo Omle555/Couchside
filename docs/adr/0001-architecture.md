@@ -5,20 +5,20 @@
 
 ## Context
 
-Solidfin should be a lightweight Windows media server: easy to install, a single executable,
+Couchside should be a lightweight Windows media server: easy to install, a single executable,
 and gentle on resources. Rules.md fixes the core stack (tokio, axum, SQLite via sqlx, tracing).
 
 ## Decisions
 
 1. **Single executable.** The web UI (plain HTML/CSS/JS, no build step) is embedded with
-   `include_str!`. No Node toolchain is needed to build Solidfin.
+   `include_str!`. No Node toolchain is needed to build Couchside.
 2. **Direct play only in v0.1.** Files are streamed as-is with HTTP Range support. Transcoding is
-   the next major feature and will live in a new `solidfin-transcode` crate.
+   the next major feature and will live in a new `couchside-transcode` crate.
 3. **Runtime-checked SQL.** Queries use `sqlx::query_as` with parameters instead of the
    compile-time `query!` macros, so building does not require a live database or `.sqlx` offline
    files. Every query is covered by tests against an in-memory database.
-4. **API and server in one crate.** The `solidfin-api` crate suggested in Rules.md is a module of
-   `solidfin-server` for now; it can be split out when a second consumer appears.
+4. **API and server in one crate.** The `couchside-api` crate suggested in Rules.md is a module of
+   `couchside-server` for now; it can be split out when a second consumer appears.
 5. **Cookie sessions.** `<video>` and `<img>` tags can't send `Authorization` headers, so the
    web UI uses an HttpOnly, SameSite=Strict cookie. API clients can use `Authorization: Bearer`.
    Only SHA-256 hashes of session tokens are stored.
