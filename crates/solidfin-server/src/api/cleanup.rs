@@ -402,7 +402,7 @@ mod tests {
     fn relative_names() {
         let root = FsPath::new("/m");
         assert_eq!(
-            relative(FsPath::new("/m/Runner (2026)/Runner.mkv"), root),
+            relative(&root.join("Runner (2026)").join("Runner.mkv"), root),
             PathBuf::from("Runner (2026)")
                 .join("Runner.mkv")
                 .display()
