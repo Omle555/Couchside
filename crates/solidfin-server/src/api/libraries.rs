@@ -66,6 +66,7 @@ pub async fn create(
     let path = validate_folder(&req.path).await?;
     let library = state.db.create_library(name, req.kind, &path).await?;
     tracing::info!(name, path = %path, "library added");
+    state.manager.libraries_changed();
     state.manager.trigger();
     Ok((StatusCode::CREATED, Json(LibraryDto::from(library))))
 }
@@ -77,6 +78,7 @@ pub async fn remove(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     if state.db.delete_library(LibraryId(id)).await? {
+        state.manager.libraries_changed();
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)

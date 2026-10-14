@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Folder watching: library folders are watched for added, removed and renamed files, and only
+  the changed movie or show folder is rescanned (then media info and metadata are fetched for
+  anything new). A folder is rescanned once it has been quiet for `watch_delay_seconds`
+  (default 10) and no video in it is still being copied. On by default; new
+  `[scan] watch_folders` and `[scan] watch_delay_seconds` settings. Offline drives and shares
+  are retried every minute, and new or removed libraries are picked up straight away
 - Start-up splash screen in the web UI: the Solidfin logo, a thin progress bar that follows
   the real start-up steps (connecting, signing in, loading the first page) and a short status
   line, then a fade into the app. If the server is still starting it waits and retries instead

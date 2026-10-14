@@ -3,6 +3,7 @@
 //! "Clean up" (renames, moving images and subtitles out) and "Delete", and only when file
 //! changes are allowed.
 
+mod changes;
 mod delete;
 mod extras;
 mod frames;
@@ -10,7 +11,9 @@ mod probe;
 mod rename;
 mod scanner;
 mod walk;
+mod watch;
 
+pub use changes::{files_in_use, Change, ChangeQueue};
 pub use delete::{plan_movie_delete, DeletePlan};
 pub use extras::{is_removable_extra, move_extras, removable_extras};
 pub use frames::{Ffmpeg, Frame, FrameError, FrameRequest};
@@ -19,4 +22,5 @@ pub use rename::{
     execute_rename, map_path, plan_movie_rename, sidecar_renames, undo_rename, FileMove,
     RenameError, RenamePlan,
 };
-pub use scanner::{scan_library, ScanError, ScanStats};
+pub use scanner::{scan_library, scan_target, ScanError, ScanStats, ScanTarget};
+pub use watch::{FolderWatcher, WatchError, WatchEvent};

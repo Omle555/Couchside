@@ -23,9 +23,25 @@ pub(crate) struct WalkResult {
     pub unreadable_dirs: usize,
 }
 
+/// Folders next to a lone video whose subtitles belong to it.
+pub(crate) const SUBTITLE_DIRS: [&str; 4] = ["Subs", "subs", "Subtitles", "subtitles"];
+
 /// Walks `root` recursively. Fails only if `root` itself cannot be read, so an
 /// offline drive never looks like an empty library.
 pub(crate) fn walk(root: &Path) -> std::io::Result<WalkResult> {
+    walk_where(root, |_, _| true)
+}
+
+/// Walks only the files directly in `root` and its subtitle folders: the loose files of
+/// a library root.
+pub(crate) fn walk_root_files(root: &Path) -> std::io::Result<WalkResult> {
+    walk_where(root, |parent, name| {
+        parent == root && SUBTITLE_DIRS.contains(&name)
+    })
+}
+
+/// Walks `root`, entering a sub-folder only when `descend(parent, name)` allows it.
+fn walk_where(root: &Path, descend: impl Fn(&Path, &str) -> bool) -> std::io::Result<WalkResult> {
     let mut result = WalkResult::default();
     // Read the root eagerly so its failure is reported to the caller.
     let root_entries = std::fs::read_dir(root)?;
@@ -55,7 +71,9 @@ pub(crate) fn walk(root: &Path) -> std::io::Result<WalkResult> {
             };
             let path = entry.path();
             if file_type.is_dir() {
-                pending.push((path, None));
+                if descend(&dir, &name) {
+                    pending.push((path, None));
+                }
             } else if file_type.is_file() {
                 if is_video_file(&path) {
                     let Ok(meta) = entry.metadata() else {

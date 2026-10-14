@@ -3,17 +3,22 @@
 
 use serde::Serialize;
 use solidfin_core::{now_unix, MediaId, ShowId};
-use solidfin_db::{Db, DbError, ItemMetadata, MediaItem, MovieLookup, MovieMetadata};
-use solidfin_library::{scan_library, Ffprobe};
+use solidfin_db::{Db, DbError, ItemMetadata, Library, MediaItem, MovieLookup, MovieMetadata};
+use solidfin_library::{
+    files_in_use, scan_library, scan_target, Change, ChangeQueue, Ffprobe, FolderWatcher,
+    ScanTarget, WatchEvent,
+};
 use solidfin_metadata::{EpisodeInfo, MetadataError, MovieDetails, Tmdb};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{Notify, OwnedMutexGuard};
 
 const BATCH: i64 = 50;
+/// How often folder watching re-reads the library list (and retries offline folders).
+const WATCH_REFRESH: Duration = Duration::from_secs(60);
 
 /// What the background worker is doing, shown on the settings page.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -65,6 +70,7 @@ pub struct LibraryManager {
     tmdb: RwLock<Option<Arc<Tmdb>>>,
     status: Mutex<ScanStatus>,
     run_lock: Arc<tokio::sync::Mutex<()>>,
+    libraries_changed: Notify,
 }
 
 impl LibraryManager {
@@ -76,6 +82,7 @@ impl LibraryManager {
             tmdb: RwLock::new(tmdb.map(Arc::new)),
             status: Mutex::new(ScanStatus::default()),
             run_lock: Arc::new(tokio::sync::Mutex::new(())),
+            libraries_changed: Notify::new(),
         })
     }
 
@@ -211,18 +218,162 @@ impl LibraryManager {
         });
     }
 
+    /// Re-reads the library list for folder watching (after a library was added or removed).
+    pub fn libraries_changed(&self) {
+        self.libraries_changed.notify_one();
+    }
+
+    /// Watches the library folders and, once a changed folder has been quiet for `delay`,
+    /// rescans just that folder.
+    pub fn spawn_watcher(self: &Arc<Self>, delay: Duration) {
+        let this = Arc::clone(self);
+        tokio::spawn(async move { this.watch(delay).await });
+    }
+
+    async fn watch(self: Arc<Self>, delay: Duration) {
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let mut watcher = match FolderWatcher::new(events) {
+            Ok(watcher) => watcher,
+            Err(err) => {
+                tracing::warn!(error = %err, "folder watching is off; libraries update on scans only");
+                return;
+            }
+        };
+        let mut libraries = Vec::new();
+        let mut queue = ChangeQueue::new(delay);
+        let mut refresh = tokio::time::interval(WATCH_REFRESH);
+        refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            let due = queue.next_due().map(tokio::time::Instant::from_std);
+            tokio::select! {
+                _ = refresh.tick() => {}
+                () = self.libraries_changed.notified() => {}
+                event = received.recv() => {
+                    let Some(event) = event else { return };
+                    record_event(&mut queue, &libraries, event);
+                    continue;
+                }
+                () = sleep_until(due) => {
+                    self.start_changes(&mut queue, &libraries).await;
+                    continue;
+                }
+            }
+            let Some(updated) = self.watch_libraries(watcher).await else {
+                return;
+            };
+            (watcher, libraries) = updated;
+        }
+    }
+
+    /// Points the watcher at the current library folders.
+    async fn watch_libraries(
+        &self,
+        mut watcher: FolderWatcher,
+    ) -> Option<(FolderWatcher, Vec<Library>)> {
+        let libraries = match self.db.list_libraries().await {
+            Ok(libraries) => libraries,
+            Err(err) => {
+                tracing::warn!(error = %err, "could not list libraries to watch");
+                Vec::new()
+            }
+        };
+        let roots: Vec<PathBuf> = libraries.iter().map(|l| PathBuf::from(&l.path)).collect();
+        match tokio::task::spawn_blocking(move || {
+            watcher.watch_only(&roots);
+            watcher
+        })
+        .await
+        {
+            Ok(watcher) => Some((watcher, libraries)),
+            Err(err) => {
+                tracing::warn!(error = %err, "folder watching stopped");
+                None
+            }
+        }
+    }
+
+    /// Rescans the changes that are ready. Folders with a video still being copied, and
+    /// everything while another run is going, wait for another quiet period.
+    async fn start_changes(self: &Arc<Self>, queue: &mut ChangeQueue, libraries: &[Library]) {
+        let now = std::time::Instant::now();
+        let mut work = Vec::new();
+        for change in queue.take_ready(now) {
+            let Some(library) = libraries.iter().find(|l| l.id == change.library) else {
+                continue;
+            };
+            if let Some(target) = &change.target {
+                let (root, check) = (PathBuf::from(&library.path), target.clone());
+                let busy = tokio::task::spawn_blocking(move || files_in_use(&root, &check))
+                    .await
+                    .unwrap_or(false);
+                if busy {
+                    tracing::debug!(library = %library.name, ?target, "files still being copied; waiting");
+                    queue.record(change, now);
+                    continue;
+                }
+            }
+            work.push((library.clone(), change));
+        }
+        if work.is_empty() {
+            return;
+        }
+        let Ok(guard) = Arc::clone(&self.run_lock).try_lock_owned() else {
+            for (_, change) in work {
+                queue.record(change, now);
+            }
+            return;
+        };
+        let this = Arc::clone(self);
+        tokio::spawn(async move { this.run_changes(guard, work).await });
+    }
+
+    /// Rescans the folders where files changed, then reads media info and metadata for
+    /// anything new.
+    async fn run_changes(&self, _guard: OwnedMutexGuard<()>, work: Vec<(Library, Change)>) {
+        self.begin_run("Updating libraries");
+        let steps = u32::try_from(work.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(self.later_steps());
+        self.update_status(|s| s.steps = steps);
+        for (library, change) in work {
+            tracing::info!(library = %library.name, target = ?change.target, "files changed on disk; rescanning");
+            self.update_status(|s| s.phase = format!("Updating {}", library.name));
+            let result = match &change.target {
+                Some(target) => scan_target(&self.db, &library, target).await,
+                None => scan_library(&self.db, &library).await,
+            };
+            if let Err(err) = result {
+                self.record_error(format!("{}: {err}", library.name));
+            }
+            self.update_status(|s| s.step += 1);
+        }
+        self.finish_run().await;
+    }
+
     async fn run(&self, _guard: OwnedMutexGuard<()>) {
+        self.begin_run("Scanning libraries");
+        self.scan_all().await;
+        self.finish_run().await;
+    }
+
+    fn begin_run(&self, phase: &str) {
         self.update_status(|s| {
             s.running = true;
-            s.phase = "Scanning libraries".into();
+            s.phase = phase.into();
             s.last_started = Some(now_unix());
             s.errors.clear();
             s.step = 0;
             s.steps = 0;
         });
+    }
 
-        self.scan_all().await;
+    /// Steps after scanning: media info and metadata, when available.
+    fn later_steps(&self) -> u32 {
+        u32::from(self.ffprobe.is_some()) + u32::from(self.tmdb().is_some())
+    }
 
+    /// Reads media info and metadata for new items, then goes idle.
+    async fn finish_run(&self) {
         if self.ffprobe.is_some() {
             self.update_status(|s| s.phase = "Reading media info".into());
             if let Err(err) = self.probe_pending().await {
@@ -254,9 +405,10 @@ impl LibraryManager {
                 return;
             }
         };
-        let later_steps = u32::from(self.ffprobe.is_some()) + u32::from(self.tmdb().is_some());
-        let library_steps = u32::try_from(libraries.len()).unwrap_or(u32::MAX);
-        self.update_status(|s| s.steps = library_steps.saturating_add(later_steps));
+        let steps = u32::try_from(libraries.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(self.later_steps());
+        self.update_status(|s| s.steps = steps);
         for library in libraries {
             self.update_status(|s| s.phase = format!("Scanning {}", library.name));
             if let Err(err) = scan_library(&self.db, &library).await {
@@ -571,5 +723,117 @@ fn movie_metadata(
         directors: d.directors,
         poster_file,
         backdrop_file,
+    }
+}
+
+/// Queues the parts of libraries touched by a file-system event.
+fn record_event(queue: &mut ChangeQueue, libraries: &[Library], event: WatchEvent) {
+    let now = std::time::Instant::now();
+    if event.rescan && event.paths.is_empty() {
+        for library in libraries {
+            queue.record(
+                Change {
+                    library: library.id,
+                    target: None,
+                },
+                now,
+            );
+        }
+        return;
+    }
+    for path in &event.paths {
+        let Some(library) = library_for(libraries, path) else {
+            continue;
+        };
+        let target = if event.rescan {
+            None
+        } else {
+            match ScanTarget::for_path(Path::new(&library.path), path) {
+                Some(target) => Some(target),
+                None => continue,
+            }
+        };
+        queue.record(
+            Change {
+                library: library.id,
+                target,
+            },
+            now,
+        );
+    }
+}
+
+/// The library whose folder holds `path` (the innermost one if libraries are nested).
+fn library_for<'a>(libraries: &'a [Library], path: &Path) -> Option<&'a Library> {
+    libraries
+        .iter()
+        .filter(|library| path.starts_with(&library.path))
+        .max_by_key(|library| library.path.len())
+}
+
+/// Sleeps until `due`, or forever if nothing is due.
+async fn sleep_until(due: Option<tokio::time::Instant>) {
+    match due {
+        Some(due) => tokio::time::sleep_until(due).await,
+        None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidfin_core::{LibraryId, LibraryKind};
+
+    fn library(id: i64, path: &Path) -> Library {
+        Library {
+            id: LibraryId(id),
+            name: format!("Library {id}"),
+            kind: LibraryKind::Movies,
+            path: path.to_string_lossy().into_owned(),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn events_queue_the_changed_folder_of_their_library() {
+        let movies = Path::new("media").join("Movies");
+        let shows = Path::new("media").join("TV");
+        let libraries = [library(1, &movies), library(2, &shows)];
+        let mut queue = ChangeQueue::new(Duration::ZERO);
+        let heat = movies.join("Heat (1995)");
+        record_event(
+            &mut queue,
+            &libraries,
+            WatchEvent {
+                paths: vec![
+                    heat.join("Heat (1995).mkv"),
+                    heat.join("Heat (1995).en.srt"),
+                    Path::new("elsewhere").join("file.mkv"),
+                ],
+                rescan: false,
+            },
+        );
+        record_event(
+            &mut queue,
+            &libraries,
+            WatchEvent {
+                paths: vec![shows.join("Firefly")],
+                rescan: true,
+            },
+        );
+        let ready = queue.take_ready(std::time::Instant::now());
+        assert_eq!(
+            ready,
+            vec![
+                Change {
+                    library: LibraryId(1),
+                    target: Some(ScanTarget::Folder(heat)),
+                },
+                Change {
+                    library: LibraryId(2),
+                    target: None,
+                },
+            ]
+        );
     }
 }

@@ -259,6 +259,11 @@ async fn start_services(
     progress.begin(BootStep::Library);
     let manager = LibraryManager::new(db.clone(), ffprobe, tmdb);
     manager.spawn_schedule(config.scan.interval_minutes, config.scan.scan_on_startup);
+    if config.scan.watch_folders {
+        manager.spawn_watcher(std::time::Duration::from_secs(
+            config.scan.watch_delay_seconds,
+        ));
+    }
 
     Ok(AppState {
         db,

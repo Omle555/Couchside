@@ -7,6 +7,10 @@ much like Jellyfin or Plex but much smaller: Solidfin is a single `solidfin.exe`
 ## What's new
 
 **2026-10-14**
+- Libraries now update by themselves: Solidfin watches your library folders and, as soon as a
+  movie or episode is added, removed or renamed, rescans just that folder (after it has been
+  quiet for 10 seconds, and never while a video is still being copied). Turn it off with
+  `[scan] watch_folders = false`.
 - Start-up splash screen: the Solidfin logo with a progress bar that follows the real start-up
   steps, then a fade into the app. It appears as soon as `solidfin.exe` starts (while the database,
   FFmpeg check and settings load) and says so if start-up fails.
@@ -17,6 +21,8 @@ much like Jellyfin or Plex but much smaller: Solidfin is a single `solidfin.exe`
 
 - **Libraries** of movies and TV shows on local drives, USB drives or network shares (`\\NAS\Video`)
 - **Automatic scanning** on startup, every hour and on demand; only new or changed files are processed
+- **Folder watching**: new, removed and renamed files show up within seconds; only the changed
+  movie or show folder is rescanned
 - **Smart file-name parsing**: `The Matrix (1999).mkv`, `The.Matrix.1999.1080p.BluRay.mkv`, `Show/Season 01/Show - S01E02 - Title.mkv`, `S01E01E02`, `1x02`
 - **Automatic TMDB matching** for movies: each file name is matched to The Movie Database using the
   title, year and popularity, then the poster, backdrop, description, tagline, genres, rating,
@@ -180,7 +186,7 @@ later version.
 crates/
   solidfin-core       shared types, config, file-name parsing, path safety
   solidfin-db         SQLite schema, migrations and queries
-  solidfin-library    folder scanning, ffprobe and ffmpeg frame grabs
+  solidfin-library    folder scanning and watching, ffprobe and ffmpeg frame grabs
   solidfin-metadata   TMDB client and image cache
   solidfin-server     solidfin.exe: HTTP API, web UI, Windows service
 docs/                 API reference and architecture decisions

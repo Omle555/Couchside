@@ -121,6 +121,12 @@ pub struct ScanConfig {
     pub interval_minutes: u64,
     /// Scan all libraries when the server starts.
     pub scan_on_startup: bool,
+    /// Watch library folders and update the library as soon as files are added, removed
+    /// or renamed.
+    pub watch_folders: bool,
+    /// Seconds a changed folder must stay quiet before it is rescanned, so files that are
+    /// still being copied are not read half-written.
+    pub watch_delay_seconds: u64,
 }
 
 impl Default for ScanConfig {
@@ -128,6 +134,8 @@ impl Default for ScanConfig {
         Self {
             interval_minutes: 60,
             scan_on_startup: true,
+            watch_folders: true,
+            watch_delay_seconds: 10,
         }
     }
 }
@@ -169,6 +177,8 @@ language = "en-US"
 [scan]
 interval_minutes = 60
 scan_on_startup = true
+# true = update a library as soon as files are added, removed or renamed in its folders.
+watch_folders = true
 
 [library]
 # true = the movie page's "Clean up" button can rename a movie file (and the subtitles and
@@ -258,6 +268,8 @@ mod tests {
         assert_eq!(cfg.server.bind, "127.0.0.1");
         assert!(cfg.server.lan_only);
         assert_eq!(cfg.scan.interval_minutes, 60);
+        assert!(cfg.scan.watch_folders);
+        assert_eq!(cfg.scan.watch_delay_seconds, 10);
         assert!(!cfg.library.allow_file_renames);
     }
 }

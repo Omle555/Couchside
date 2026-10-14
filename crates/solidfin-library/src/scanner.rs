@@ -1,7 +1,9 @@
 //! Incremental library scanning.
 
-use crate::walk::{walk, FoundVideo};
-use solidfin_core::naming::{parse_episode, parse_movie, parse_show_folder};
+use crate::walk::{walk, walk_root_files, FoundVideo, WalkResult, SUBTITLE_DIRS};
+use solidfin_core::naming::{
+    is_ignored_name, is_subtitle_file, is_video_file, parse_episode, parse_movie, parse_show_folder,
+};
 use solidfin_core::{LibraryKind, MediaId, MediaKind, ShowId};
 use solidfin_db::{Db, DbError, Library, NewMedia, NewSubtitle};
 use std::collections::{HashMap, HashSet};
@@ -40,12 +42,114 @@ pub enum ScanError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// The part of a library touched by a change on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ScanTarget {
+    /// A folder directly inside the library root (a movie or show folder) and everything in it.
+    Folder(PathBuf),
+    /// The video and subtitle files lying directly in the library root.
+    RootFiles,
+}
+
+impl ScanTarget {
+    /// The target a changed path under `root` belongs to. `None` for the root itself,
+    /// paths outside it and names the scanner ignores.
+    pub fn for_path(root: &Path, changed: &Path) -> Option<Self> {
+        let relative = changed.strip_prefix(root).ok()?;
+        let mut components = relative.components();
+        let first = components.next()?;
+        let name = first.as_os_str().to_string_lossy();
+        if is_ignored_name(&name) {
+            return None;
+        }
+        let top = root.join(first.as_os_str());
+        let loose_file =
+            components.next().is_none() && (is_video_file(&top) || is_subtitle_file(&top));
+        Some(if loose_file {
+            Self::RootFiles
+        } else {
+            Self::Folder(top)
+        })
+    }
+
+    /// Whether a stored file path lies inside this target of `root`.
+    fn contains(&self, root: &Path, path: &str) -> bool {
+        let path = Path::new(path);
+        match self {
+            Self::Folder(folder) => starts_with_nocase(path, folder),
+            Self::RootFiles => {
+                let Some(parent) = path.parent() else {
+                    return false;
+                };
+                let in_subtitle_dir = parent
+                    .file_name()
+                    .is_some_and(|n| SUBTITLE_DIRS.iter().any(|d| n == *d));
+                same_path(parent, root)
+                    || in_subtitle_dir && parent.parent().is_some_and(|p| same_path(p, root))
+            }
+        }
+    }
+}
+
+/// Case-insensitive path equality (Windows file names ignore case).
+fn same_path(a: &Path, b: &Path) -> bool {
+    starts_with_nocase(a, b) && a.components().count() == b.components().count()
+}
+
+/// Case-insensitive `Path::starts_with`.
+fn starts_with_nocase(path: &Path, prefix: &Path) -> bool {
+    let mut path = path.components();
+    prefix.components().all(|p| {
+        path.next().is_some_and(|c| {
+            c.as_os_str().to_string_lossy().to_lowercase()
+                == p.as_os_str().to_string_lossy().to_lowercase()
+        })
+    })
+}
+
 /// Scans one library: adds new files, updates changed ones, links subtitles and
 /// removes entries for deleted files. Unchanged files cost one lookup each.
 pub async fn scan_library(db: &Db, library: &Library) -> Result<ScanStats, ScanError> {
+    scan(db, library, None).await
+}
+
+/// Scans only `target` of a library after files there were added, changed, renamed or
+/// removed. Entries elsewhere in the library are left alone.
+pub async fn scan_target(
+    db: &Db,
+    library: &Library,
+    target: &ScanTarget,
+) -> Result<ScanStats, ScanError> {
+    scan(db, library, Some(target)).await
+}
+
+/// Reads the files of the whole library (`None`) or one target of it.
+pub(crate) fn walk_scope(root: &Path, target: Option<&ScanTarget>) -> std::io::Result<WalkResult> {
+    match target {
+        None => walk(root),
+        Some(ScanTarget::RootFiles) => walk_root_files(root),
+        Some(ScanTarget::Folder(folder)) => {
+            // An offline drive must fail, not look like a removed folder.
+            std::fs::metadata(root)?;
+            match std::fs::metadata(folder) {
+                Ok(meta) if meta.is_dir() => walk(folder),
+                Ok(_) => Ok(WalkResult::default()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(WalkResult::default()),
+                Err(err) => Err(err),
+            }
+        }
+    }
+}
+
+async fn scan(
+    db: &Db,
+    library: &Library,
+    target: Option<&ScanTarget>,
+) -> Result<ScanStats, ScanError> {
     let root = PathBuf::from(&library.path);
     let walk_root = root.clone();
-    let walked = tokio::task::spawn_blocking(move || walk(&walk_root))
+    let walk_target = target.cloned();
+    let walked = tokio::task::spawn_blocking(move || walk_scope(&walk_root, walk_target.as_ref()))
         .await?
         .map_err(|source| ScanError::RootUnavailable {
             path: library.path.clone(),
@@ -116,7 +220,10 @@ pub async fn scan_library(db: &Db, library: &Library) -> Result<ScanStats, ScanE
             .library_media_paths(library.id)
             .await?
             .into_iter()
-            .filter(|(_, path)| !seen.contains(&path.to_lowercase()))
+            .filter(|(_, path)| {
+                target.is_none_or(|t| t.contains(&root, path))
+                    && !seen.contains(&path.to_lowercase())
+            })
             .map(|(id, _)| id)
             .collect();
         if !gone.is_empty() {
@@ -240,7 +347,7 @@ async fn sync_subtitles(
         .map(|v| v.iter().collect())
         .unwrap_or_default();
     if only_video_in_dir {
-        for sub_dir in ["Subs", "subs", "Subtitles", "subtitles"] {
+        for sub_dir in SUBTITLE_DIRS {
             if let Some(found) = subtitles.get(&dir.join(sub_dir)) {
                 candidates.extend(found.iter());
             }
@@ -463,5 +570,96 @@ mod tests {
             .expect("library");
         let err = scan_library(&db, &lib).await.expect_err("should fail");
         assert!(matches!(err, ScanError::RootUnavailable { .. }));
+    }
+
+    #[test]
+    fn changed_paths_map_to_their_top_folder() {
+        let root = Path::new("lib");
+        let movie = root.join("Heat (1995)");
+        assert_eq!(
+            ScanTarget::for_path(root, &movie.join("Subs").join("en.srt")),
+            Some(ScanTarget::Folder(movie.clone()))
+        );
+        assert_eq!(
+            ScanTarget::for_path(root, &movie),
+            Some(ScanTarget::Folder(movie))
+        );
+        assert_eq!(
+            ScanTarget::for_path(root, &root.join("Heat.1995.mkv")),
+            Some(ScanTarget::RootFiles)
+        );
+        assert_eq!(
+            ScanTarget::for_path(root, &root.join("Movie.en.srt")),
+            Some(ScanTarget::RootFiles)
+        );
+        assert_eq!(ScanTarget::for_path(root, root), None);
+        assert_eq!(ScanTarget::for_path(root, Path::new("elsewhere")), None);
+        assert_eq!(
+            ScanTarget::for_path(root, &root.join("$RECYCLE.BIN").join("x.mkv")),
+            None
+        );
+    }
+
+    #[test]
+    fn targets_contain_paths_ignoring_case() {
+        let root = Path::new("lib");
+        let folder = ScanTarget::Folder(root.join("Heat (1995)"));
+        let inside = root.join("HEAT (1995)").join("Heat.mkv");
+        let outside = root.join("Heat (1995) 2").join("Heat.mkv");
+        assert!(folder.contains(root, &inside.to_string_lossy()));
+        assert!(!folder.contains(root, &outside.to_string_lossy()));
+
+        let loose = ScanTarget::RootFiles;
+        assert!(loose.contains(root, &root.join("Heat.mkv").to_string_lossy()));
+        assert!(loose.contains(root, &root.join("Subs").join("Heat.mkv").to_string_lossy()));
+        assert!(!loose.contains(root, &inside.to_string_lossy()));
+    }
+
+    #[tokio::test]
+    async fn target_scan_only_touches_its_folder() {
+        let root = temp_dir("target");
+        let matrix = root.join("The Matrix (1999)");
+        let heat = root.join("Heat (1995)");
+        touch(&matrix.join("The Matrix (1999).mkv"));
+        touch(&heat.join("Heat (1995).mkv"));
+        touch(&root.join("Alien.1979.mkv"));
+
+        let db = Db::open_in_memory().await.expect("db");
+        let lib = db
+            .create_library("Movies", LibraryKind::Movies, &root.to_string_lossy())
+            .await
+            .expect("library");
+        scan_library(&db, &lib).await.expect("scan");
+
+        // A new movie folder appears and another movie is deleted, but only the
+        // new folder is scanned: the deleted movie stays until its own folder is scanned.
+        let ronin = root.join("Ronin (1998)");
+        touch(&ronin.join("Ronin (1998).mkv"));
+        std::fs::remove_dir_all(&heat).expect("remove heat");
+        let stats = scan_target(&db, &lib, &ScanTarget::Folder(ronin))
+            .await
+            .expect("scan ronin");
+        assert_eq!((stats.added_or_updated, stats.removed), (1, 0));
+
+        let stats = scan_target(&db, &lib, &ScanTarget::Folder(heat))
+            .await
+            .expect("scan removed folder");
+        assert_eq!((stats.added_or_updated, stats.removed), (0, 1));
+
+        std::fs::remove_file(root.join("Alien.1979.mkv")).expect("remove alien");
+        let stats = scan_target(&db, &lib, &ScanTarget::RootFiles)
+            .await
+            .expect("scan root files");
+        assert_eq!((stats.unchanged, stats.removed), (0, 1));
+
+        let (items, total) = db
+            .list_movies(None, solidfin_db::MovieSort::Title, 10, 0)
+            .await
+            .expect("list");
+        assert_eq!(total, 2);
+        let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, ["The Matrix", "Ronin"]);
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

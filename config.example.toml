@@ -35,6 +35,13 @@ language = "en-US"
 interval_minutes = 60
 # Scan all libraries when Solidfin starts.
 scan_on_startup = true
+# true = watch library folders and update the library as soon as files are added, removed or
+# renamed (only the changed movie or show folder is rescanned). Works on local drives, USB
+# drives and most network shares. false = only the scans above.
+watch_folders = true
+# Seconds a changed folder must stay quiet before it is rescanned. A video that is still being
+# copied is also left until the copy finishes, so it is never read half-written.
+watch_delay_seconds = 10
 
 [library]
 # true = the "Clean up" button on a movie's page can also rename the movie file, plus the
