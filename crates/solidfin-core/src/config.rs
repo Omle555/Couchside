@@ -31,7 +31,7 @@ pub enum ConfigError {
         path: PathBuf,
         /// Underlying parse error.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
 
@@ -199,7 +199,7 @@ impl Config {
         })?;
         toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         })
     }
 
