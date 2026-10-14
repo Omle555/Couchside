@@ -56,3 +56,19 @@ watch_delay_seconds = 10
 # false = Couchside never renames, moves or changes your files.
 # The "Allow file renames" switch in Settings → Libraries overrides this once it has been used.
 allow_file_renames = false
+
+[transcode]
+# Video conversion for files a browser or TV can't play as they are (not switched on yet:
+# Couchside still plays files as-is; these settings are read ahead of the feature).
+# "nvenc" = use an NVIDIA graphics card, "none" = use the processor only.
+# With "nvenc", Couchside falls back to the processor if the graphics card fails.
+hardware = "none"
+# Most videos converted at the same time. Extra viewers get a "busy" message.
+max_transcodes = 2
+# Most streams at the same time that only repackage the file or convert its audio (cheap).
+max_remuxes = 4
+# Where temporary converted pieces are written. Default: transcodes\ in the data folder.
+# Couchside empties it at startup (only its own session folders).
+# temp_dir = 'D:\CouchsideTranscodes'
+# Gigabytes the temporary pieces may use before the oldest idle streams are stopped.
+temp_max_gb = 20

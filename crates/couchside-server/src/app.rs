@@ -13,6 +13,7 @@ use couchside_db::Db;
 use couchside_db::{DbResult, ALLOW_FILE_RENAMES, METADATA_LANGUAGE, TMDB_API_KEY};
 use couchside_library::{Ffmpeg, Ffprobe};
 use couchside_metadata::Tmdb;
+use couchside_transcode::clear_temp_dir;
 use std::future::{Future, IntoFuture};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -254,6 +255,7 @@ async fn start_services(
     progress.begin(BootStep::Tools);
     let ffprobe = Ffprobe::locate(config.ffmpeg.ffprobe_path.as_deref()).await;
     let ffmpeg = Ffmpeg::locate(ffmpeg_candidates(config, ffprobe.as_ref())).await;
+    clear_transcode_dir(config.transcode_dir()).await;
 
     progress.begin(BootStep::Settings);
     let (key, language) = effective_metadata_settings(&db, config).await?;
@@ -284,6 +286,22 @@ async fn start_services(
         config: Arc::new(config.clone()),
         title_scanner: Arc::new(TitleScanner::new(ffmpeg)),
     })
+}
+
+/// Removes transcode folders left by a previous run. A failure is logged, not fatal:
+/// playback of original files doesn't need the folder.
+async fn clear_transcode_dir(dir: PathBuf) {
+    let shown = dir.display().to_string();
+    match tokio::task::spawn_blocking(move || clear_temp_dir(&dir)).await {
+        Ok(Ok(0)) => {}
+        Ok(Ok(removed)) => {
+            tracing::info!(dir = %shown, removed, "removed old transcode folders");
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(dir = %shown, error = %err, "could not prepare transcode folder");
+        }
+        Err(err) => tracing::warn!(error = %err, "transcode folder cleanup did not finish"),
+    }
 }
 
 /// The start-up page, served on a copy of the listening socket until the app is ready.

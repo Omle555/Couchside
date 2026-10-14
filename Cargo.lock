@@ -269,6 +269,7 @@ dependencies = [
  "couchside-db",
  "couchside-library",
  "couchside-metadata",
+ "couchside-transcode",
  "hex",
  "rand 0.8.8",
  "serde",
@@ -282,6 +283,17 @@ dependencies = [
  "tracing-subscriber",
  "windows",
  "windows-service",
+]
+
+[[package]]
+name = "couchside-transcode"
+version = "0.1.0"
+dependencies = [
+ "couchside-core",
+ "couchside-db",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

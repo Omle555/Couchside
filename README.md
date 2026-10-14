@@ -7,6 +7,11 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 ## What's new
 
 **2026-10-14**
+- Transcoding, step 1 of 4 (behind the scenes, nothing to see yet): Couchside now notes every
+  video, audio and subtitle track inside each file, which it needs to decide later whether a
+  file can play as-is or must be converted. After updating, it re-reads every file once in the
+  background. There is a new, optional `[transcode]` section for `config.toml` (see
+  `config.example.toml`); it does nothing until conversion itself arrives.
 - Transcoding is planned: [docs/transcoding-plan.md](docs/transcoding-plan.md) covers how Couchside
   will convert files your browser or TV can't play (audio-only conversion first, then full video
   conversion on the NVIDIA GPU), in four phases. Nothing has changed in the app yet.
@@ -196,6 +201,7 @@ crates/
   couchside-library    folder scanning and watching, ffprobe and ffmpeg frame grabs
   couchside-metadata   TMDB client and image cache
   couchside-server     couchside.exe: HTTP API, web UI, Windows service
+  couchside-transcode  playback decisions (direct play, remux, transcode) and transcode temp files
 docs/                 API reference and architecture decisions
 Rules.md              project rules for contributors
 ```

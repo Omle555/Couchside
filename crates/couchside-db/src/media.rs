@@ -1,6 +1,6 @@
 //! Media item, show and subtitle queries.
 
-use crate::{Db, DbResult, MediaItem, Show, Subtitle};
+use crate::{Db, DbResult, MediaItem, MediaStream, Show, Subtitle};
 use couchside_core::naming::sort_title;
 use couchside_core::{now_unix, LibraryId, MediaId, MediaKind, ShowId, SubtitleId};
 
@@ -86,6 +86,10 @@ pub struct ProbeData {
     pub width: Option<i64>,
     /// Video height.
     pub height: Option<i64>,
+    /// Overall bitrate in bits per second.
+    pub bitrate: Option<i64>,
+    /// Every video, audio and subtitle stream (embedded cover art excluded).
+    pub streams: Vec<MediaStream>,
 }
 
 /// Online metadata for a movie, show or episode. `None` fields keep the current value.
@@ -354,9 +358,10 @@ impl Db {
     pub async fn set_probe_result(&self, id: MediaId, data: Option<&ProbeData>) -> DbResult<()> {
         let empty = ProbeData::default();
         let d = data.unwrap_or(&empty);
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "UPDATE media_items SET probed = 1, runtime_seconds = ?, container = ?, video_codec = ?,
-                 audio_codec = ?, width = ?, height = ?
+                 audio_codec = ?, width = ?, height = ?, bitrate = ?
              WHERE id = ?",
         )
         .bind(d.runtime_seconds)
@@ -365,10 +370,50 @@ impl Db {
         .bind(&d.audio_codec)
         .bind(d.width)
         .bind(d.height)
+        .bind(d.bitrate)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM media_streams WHERE media_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        for s in &d.streams {
+            sqlx::query(
+                "INSERT INTO media_streams (media_id, stream_index, kind, codec, profile, pix_fmt,
+                     bit_depth, color_transfer, channels, language, title, is_default, is_forced)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(s.stream_index)
+            .bind(s.kind)
+            .bind(&s.codec)
+            .bind(&s.profile)
+            .bind(&s.pix_fmt)
+            .bind(s.bit_depth)
+            .bind(&s.color_transfer)
+            .bind(s.channels)
+            .bind(&s.language)
+            .bind(&s.title)
+            .bind(s.is_default)
+            .bind(s.is_forced)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// The streams ffprobe found in an item, in file order.
+    pub async fn streams_for(&self, media_id: MediaId) -> DbResult<Vec<MediaStream>> {
+        Ok(sqlx::query_as::<_, MediaStream>(
+            "SELECT stream_index, kind, codec, profile, pix_fmt, bit_depth, color_transfer,
+                 channels, language, title, is_default, is_forced
+             FROM media_streams WHERE media_id = ? ORDER BY stream_index",
+        )
+        .bind(media_id)
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     // ----- Metadata ----------------------------------------------------------
@@ -613,7 +658,7 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use couchside_core::LibraryKind;
+    use couchside_core::{LibraryKind, StreamKind};
 
     fn movie(library_id: LibraryId, path: &str, title: &str, year: Option<i64>) -> NewMedia {
         NewMedia {
@@ -631,6 +676,58 @@ mod tests {
             hint_tmdb_id: None,
             hint_imdb_id: None,
         }
+    }
+
+    fn stream(stream_index: i64, kind: StreamKind, codec: &str) -> MediaStream {
+        MediaStream {
+            stream_index,
+            kind,
+            codec: Some(codec.to_string()),
+            profile: None,
+            pix_fmt: None,
+            bit_depth: None,
+            color_transfer: None,
+            channels: None,
+            language: None,
+            title: None,
+            is_default: false,
+            is_forced: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_result_replaces_streams() {
+        let db = Db::open_in_memory().await.expect("db");
+        let lib = db
+            .create_library("Movies", LibraryKind::Movies, "/m")
+            .await
+            .expect("library");
+        let id = db
+            .upsert_media(&movie(lib.id, "/m/a.mkv", "Alien", Some(1979)))
+            .await
+            .expect("insert");
+
+        let mut audio = stream(1, StreamKind::Audio, "dts");
+        audio.channels = Some(6);
+        audio.language = Some("eng".into());
+        audio.is_default = true;
+        let first = ProbeData {
+            bitrate: Some(12_000_000),
+            streams: vec![stream(0, StreamKind::Video, "h264"), audio.clone()],
+            ..Default::default()
+        };
+        db.set_probe_result(id, Some(&first)).await.expect("probe");
+        assert_eq!(db.streams_for(id).await.expect("streams"), first.streams);
+
+        let second = ProbeData {
+            streams: vec![stream(0, StreamKind::Video, "hevc")],
+            ..Default::default()
+        };
+        db.set_probe_result(id, Some(&second)).await.expect("probe");
+        assert_eq!(db.streams_for(id).await.expect("streams"), second.streams);
+
+        db.set_probe_result(id, None).await.expect("probe");
+        assert!(db.streams_for(id).await.expect("streams").is_empty());
     }
 
     #[tokio::test]

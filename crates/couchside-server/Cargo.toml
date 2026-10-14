@@ -24,6 +24,7 @@ couchside-core = { workspace = true }
 couchside-db = { workspace = true }
 couchside-library = { workspace = true }
 couchside-metadata = { workspace = true }
+couchside-transcode = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

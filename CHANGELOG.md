@@ -13,6 +13,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the new location and `solidfin.db` is renamed to `couchside.db`. Users must sign in again.
 
 ### Added
+- Groundwork for transcoding ([plan](docs/transcoding-plan.md), [ADR 0002](docs/adr/0002-transcoding.md)):
+  ffprobe now records every video, audio and subtitle stream (codec, profile, bit depth, HDR,
+  channels, language, default/forced) and the overall bitrate in a new `media_streams` table;
+  existing files are re-probed once after upgrading. New `couchside-transcode` crate with the
+  playback decision (direct play, remux, audio convert or transcode) and a `[transcode]` config
+  section (`hardware`, `max_transcodes`, `max_remuxes`, `temp_dir`, `temp_max_gb`). Leftover
+  transcode folders are removed at startup. Playback itself is unchanged for now
 - Folder watching: library folders are watched for added, removed and renamed files, and only
   the changed movie or show folder is rescanned (then media info and metadata are fetched for
   anything new). A folder is rescanned once it has been quiet for `watch_delay_seconds`

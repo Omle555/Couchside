@@ -1,7 +1,9 @@
 //! Rows returned from the database. These are internal types: the API maps
 //! them to its own DTOs before sending anything to clients.
 
-use couchside_core::{LibraryId, LibraryKind, MediaId, MediaKind, ShowId, SubtitleId, UserId};
+use couchside_core::{
+    LibraryId, LibraryKind, MediaId, MediaKind, ShowId, StreamKind, SubtitleId, UserId,
+};
 use sqlx::FromRow;
 
 /// A configured media library.
@@ -179,4 +181,33 @@ pub struct Progress {
     pub played: bool,
     /// Last update (Unix seconds).
     pub updated_at: i64,
+}
+
+/// One video, audio or subtitle stream inside a media file, as read by ffprobe.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct MediaStream {
+    /// ffprobe's stream index (what `-map 0:N` refers to).
+    pub stream_index: i64,
+    /// Video, audio or subtitle.
+    pub kind: StreamKind,
+    /// ffprobe codec name, e.g. `h264`, `hevc`, `ac3`, `subrip`, `hdmv_pgs_subtitle`.
+    pub codec: Option<String>,
+    /// Codec profile, e.g. `High`, `Main 10`, `DTS-HD MA`.
+    pub profile: Option<String>,
+    /// Video pixel format, e.g. `yuv420p10le`.
+    pub pix_fmt: Option<String>,
+    /// Bits per colour sample for video (8, 10, 12).
+    pub bit_depth: Option<i64>,
+    /// Video transfer characteristics; `smpte2084` (HDR10) and `arib-std-b67` (HLG) mean HDR.
+    pub color_transfer: Option<String>,
+    /// Audio channel count.
+    pub channels: Option<i64>,
+    /// Language tag, e.g. `eng`.
+    pub language: Option<String>,
+    /// Stream title, e.g. `Director's commentary`.
+    pub title: Option<String>,
+    /// Marked as the default stream of its kind.
+    pub is_default: bool,
+    /// Marked as forced (subtitles for foreign-language parts).
+    pub is_forced: bool,
 }

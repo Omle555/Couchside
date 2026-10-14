@@ -10,7 +10,7 @@ pub mod standard_names;
 
 pub use config::Config;
 pub use ids::{LibraryId, MediaId, ShowId, SubtitleId, UserId};
-pub use kinds::{LibraryKind, MediaKind};
+pub use kinds::{LibraryKind, MediaKind, StreamKind};
 
 /// Current time as whole seconds since the Unix epoch.
 pub fn now_unix() -> i64 {

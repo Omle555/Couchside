@@ -14,7 +14,7 @@ mod users;
 pub use media::{
     FileState, ItemMetadata, MovieSort, NewMedia, NewSubtitle, ProbeData, ShowMetadata,
 };
-pub use models::{Library, MediaItem, MovieLookup, Progress, Show, Subtitle, User};
+pub use models::{Library, MediaItem, MediaStream, MovieLookup, Progress, Show, Subtitle, User};
 pub use movies::{MovieMetadata, RenamedFile};
 pub use settings::{ALLOW_FILE_RENAMES, METADATA_LANGUAGE, TMDB_API_KEY};
 

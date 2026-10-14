@@ -51,6 +51,8 @@ pub struct Config {
     pub scan: ScanConfig,
     /// What Couchside may do to files in your libraries.
     pub library: LibraryConfig,
+    /// Converting files that clients can't play as they are.
+    pub transcode: TranscodeConfig,
 }
 
 /// HTTP listener settings.
@@ -149,6 +151,45 @@ pub struct LibraryConfig {
     pub allow_file_renames: bool,
 }
 
+/// Which hardware encodes video when a file must be converted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HardwareAccel {
+    /// The processor only (libx264).
+    #[default]
+    None,
+    /// An NVIDIA graphics card (NVENC), falling back to the processor if it fails.
+    Nvenc,
+}
+
+/// Converting files that clients can't play as they are.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TranscodeConfig {
+    /// Hardware used to encode video. Opt-in; the processor is the default.
+    pub hardware: HardwareAccel,
+    /// Most full video conversions running at once.
+    pub max_transcodes: u32,
+    /// Most remux / audio-only conversions running at once.
+    pub max_remuxes: u32,
+    /// Overrides the default `transcodes` folder inside the data directory.
+    pub temp_dir: Option<PathBuf>,
+    /// Gigabytes temporary segments may use before idle sessions are stopped.
+    pub temp_max_gb: u64,
+}
+
+impl Default for TranscodeConfig {
+    fn default() -> Self {
+        Self {
+            hardware: HardwareAccel::None,
+            max_transcodes: 2,
+            max_remuxes: 4,
+            temp_dir: None,
+            temp_max_gb: 20,
+        }
+    }
+}
+
 /// Text written when no config file exists yet.
 const DEFAULT_CONFIG_TEXT: &str = r#"# Couchside configuration. Restart Couchside after editing.
 
@@ -186,6 +227,14 @@ watch_folders = true
 # and new names first. Renames are listed in logs\renames.log.
 # The "Allow file renames" switch in Settings overrides this once it has been used.
 allow_file_renames = false
+
+[transcode]
+# Converting files your browser or TV can't play (not switched on yet).
+# "nvenc" = use an NVIDIA graphics card (falls back to the processor), "none" = processor only.
+hardware = "none"
+max_transcodes = 2
+max_remuxes = 4
+# temp_dir = 'D:\CouchsideTranscodes'
 "#;
 
 impl Config {
@@ -216,6 +265,14 @@ impl Config {
     /// Effective data directory (database, images, logs).
     pub fn data_dir(&self) -> PathBuf {
         self.paths.data_dir.clone().unwrap_or_else(default_data_dir)
+    }
+
+    /// Folder for temporary transcode segments.
+    pub fn transcode_dir(&self) -> PathBuf {
+        self.transcode
+            .temp_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir().join("transcodes"))
     }
 
     /// TMDB key, ignoring blank values.
@@ -300,6 +357,24 @@ mod tests {
         assert!(cfg.server.lan_only);
         assert!(cfg.tmdb_key().is_none());
         assert!(!cfg.library.allow_file_renames);
+        assert_eq!(cfg.transcode.hardware, HardwareAccel::None);
+        assert_eq!(cfg.transcode.max_transcodes, 2);
+    }
+
+    #[test]
+    fn transcode_settings() {
+        let cfg: Config = toml::from_str(
+            "[paths]\ndata_dir = 'D:\\Data'\n[transcode]\nhardware = \"nvenc\"\nmax_transcodes = 1\n",
+        )
+        .expect("valid");
+        assert_eq!(cfg.transcode.hardware, HardwareAccel::Nvenc);
+        assert_eq!(cfg.transcode.max_transcodes, 1);
+        assert_eq!(cfg.transcode.max_remuxes, 4);
+        assert_eq!(
+            cfg.transcode_dir(),
+            PathBuf::from("D:\\Data").join("transcodes")
+        );
+        assert!(toml::from_str::<Config>("[transcode]\nhardware = \"quantum\"\n").is_err());
     }
 
     #[test]

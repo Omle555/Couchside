@@ -1,0 +1,16 @@
+[package]
+name = "couchside-transcode"
+description = "Playback decisions and FFmpeg transcoding for Couchside"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+couchside-core = { workspace = true }
+couchside-db = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

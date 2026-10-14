@@ -23,3 +23,16 @@ pub enum MediaKind {
     /// A single TV episode.
     Episode,
 }
+
+/// What a stream inside a media file carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type), sqlx(rename_all = "lowercase"))]
+#[serde(rename_all = "lowercase")]
+pub enum StreamKind {
+    /// Pictures.
+    Video,
+    /// Sound.
+    Audio,
+    /// Subtitles (text or image).
+    Subtitle,
+}

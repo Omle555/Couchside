@@ -3,7 +3,8 @@
 //! ffprobe is run as a child process with arguments passed as a list (never
 //! through a shell), a timeout, and `kill_on_drop` so no process is orphaned.
 
-use couchside_db::ProbeData;
+use couchside_core::StreamKind;
+use couchside_db::{MediaStream, ProbeData};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -137,16 +138,34 @@ struct ProbeOutput {
 
 #[derive(Debug, Deserialize)]
 struct ProbeStream {
+    index: Option<i64>,
     codec_type: Option<String>,
     codec_name: Option<String>,
+    profile: Option<String>,
     width: Option<i64>,
     height: Option<i64>,
+    pix_fmt: Option<String>,
+    bits_per_raw_sample: Option<String>,
+    color_transfer: Option<String>,
+    channels: Option<i64>,
+    #[serde(default)]
+    tags: Option<ProbeTags>,
     #[serde(default)]
     disposition: Option<ProbeDisposition>,
 }
 
 #[derive(Debug, Deserialize)]
+struct ProbeTags {
+    language: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ProbeDisposition {
+    #[serde(default)]
+    default: i64,
+    #[serde(default)]
+    forced: i64,
     #[serde(default)]
     attached_pic: i64,
 }
@@ -155,20 +174,79 @@ struct ProbeDisposition {
 struct ProbeFormat {
     format_name: Option<String>,
     duration: Option<String>,
+    bit_rate: Option<String>,
+}
+
+impl ProbeStream {
+    /// Embedded cover art, which ffprobe reports as a video stream.
+    fn is_cover_art(&self) -> bool {
+        self.disposition
+            .as_ref()
+            .is_some_and(|d| d.attached_pic != 0)
+    }
+
+    fn kind(&self) -> Option<StreamKind> {
+        match self.codec_type.as_deref()? {
+            "video" if !self.is_cover_art() => Some(StreamKind::Video),
+            "audio" => Some(StreamKind::Audio),
+            "subtitle" => Some(StreamKind::Subtitle),
+            _ => None,
+        }
+    }
+
+    /// Bits per colour sample: from ffprobe directly, else from the pixel format name.
+    fn bit_depth(&self) -> Option<i64> {
+        let raw = self
+            .bits_per_raw_sample
+            .as_deref()
+            .and_then(|b| b.parse::<i64>().ok())
+            .filter(|b| *b > 0);
+        raw.or_else(|| self.pix_fmt.as_deref().map(pix_fmt_depth))
+    }
+
+    fn to_media_stream(&self, kind: StreamKind) -> Option<MediaStream> {
+        let tags = self.tags.as_ref();
+        let disposition = self.disposition.as_ref();
+        let video = kind == StreamKind::Video;
+        Some(MediaStream {
+            stream_index: self.index?,
+            kind,
+            codec: self.codec_name.clone(),
+            profile: self.profile.clone(),
+            pix_fmt: self.pix_fmt.clone().filter(|_| video),
+            bit_depth: self.bit_depth().filter(|_| video),
+            color_transfer: self.color_transfer.clone().filter(|_| video),
+            channels: self.channels,
+            language: tags
+                .and_then(|t| t.language.clone())
+                .filter(|l| !l.eq_ignore_ascii_case("und")),
+            title: tags.and_then(|t| t.title.clone()),
+            is_default: disposition.is_some_and(|d| d.default != 0),
+            is_forced: disposition.is_some_and(|d| d.forced != 0),
+        })
+    }
+}
+
+/// Bit depth implied by a pixel format name such as `yuv420p10le` (8 when no depth is named).
+fn pix_fmt_depth(pix_fmt: &str) -> i64 {
+    ["16", "12", "10"]
+        .into_iter()
+        .find(|depth| pix_fmt.contains(&format!("p{depth}")))
+        .and_then(|depth| depth.parse().ok())
+        .unwrap_or(8)
 }
 
 /// Converts ffprobe's JSON into [`ProbeData`].
 fn parse_probe_output(json: &[u8]) -> Result<ProbeData, ProbeError> {
     let out: ProbeOutput = serde_json::from_slice(json)?;
-    // Skip embedded cover art, which ffprobe reports as a video stream.
-    let video = out.streams.iter().find(|s| {
-        s.codec_type.as_deref() == Some("video")
-            && s.disposition.as_ref().is_none_or(|d| d.attached_pic == 0)
-    });
+    let video = out
+        .streams
+        .iter()
+        .find(|s| s.kind() == Some(StreamKind::Video));
     let audio = out
         .streams
         .iter()
-        .find(|s| s.codec_type.as_deref() == Some("audio"));
+        .find(|s| s.kind() == Some(StreamKind::Audio));
     let format = out.format.as_ref();
     Ok(ProbeData {
         runtime_seconds: format
@@ -180,6 +258,15 @@ fn parse_probe_output(json: &[u8]) -> Result<ProbeData, ProbeError> {
         audio_codec: audio.and_then(|s| s.codec_name.clone()),
         width: video.and_then(|s| s.width),
         height: video.and_then(|s| s.height),
+        bitrate: format
+            .and_then(|f| f.bit_rate.as_deref())
+            .and_then(|b| b.parse::<i64>().ok())
+            .filter(|b| *b > 0),
+        streams: out
+            .streams
+            .iter()
+            .filter_map(|s| s.to_media_stream(s.kind()?))
+            .collect(),
     })
 }
 
@@ -203,6 +290,53 @@ mod tests {
         assert_eq!(data.width, Some(1920));
         assert_eq!(data.container.as_deref(), Some("matroska,webm"));
         assert!((data.runtime_seconds.unwrap_or_default() - 5400.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn reads_every_stream() {
+        let json = br#"{
+            "streams": [
+                {"index": 0, "codec_type": "video", "codec_name": "hevc", "profile": "Main 10",
+                 "pix_fmt": "yuv420p10le", "color_transfer": "smpte2084", "width": 3840, "height": 2160,
+                 "disposition": {"default": 1, "forced": 0, "attached_pic": 0}},
+                {"index": 1, "codec_type": "audio", "codec_name": "truehd", "channels": 8,
+                 "tags": {"language": "eng", "title": "Atmos"}, "disposition": {"default": 1}},
+                {"index": 2, "codec_type": "audio", "codec_name": "ac3", "channels": 2,
+                 "tags": {"language": "und"}},
+                {"index": 3, "codec_type": "subtitle", "codec_name": "hdmv_pgs_subtitle",
+                 "tags": {"language": "eng"}, "disposition": {"forced": 1}},
+                {"index": 4, "codec_type": "video", "codec_name": "mjpeg", "disposition": {"attached_pic": 1}},
+                {"index": 5, "codec_type": "attachment", "codec_name": "ttf"}
+            ],
+            "format": {"format_name": "matroska,webm", "duration": "60", "bit_rate": "45000000"}
+        }"#;
+        let data = parse_probe_output(json).expect("parses");
+        assert_eq!(data.bitrate, Some(45_000_000));
+        assert_eq!(data.streams.len(), 4);
+
+        let video = &data.streams[0];
+        assert_eq!(video.kind, StreamKind::Video);
+        assert_eq!(video.bit_depth, Some(10));
+        assert_eq!(video.color_transfer.as_deref(), Some("smpte2084"));
+        assert!(video.is_default);
+
+        let atmos = &data.streams[1];
+        assert_eq!(atmos.kind, StreamKind::Audio);
+        assert_eq!(atmos.channels, Some(8));
+        assert_eq!(atmos.title.as_deref(), Some("Atmos"));
+        assert_eq!(atmos.bit_depth, None);
+        assert_eq!(data.streams[2].language, None);
+
+        let subs = &data.streams[3];
+        assert_eq!(subs.kind, StreamKind::Subtitle);
+        assert!(subs.is_forced && !subs.is_default);
+    }
+
+    #[test]
+    fn bit_depth_from_pixel_format() {
+        assert_eq!(pix_fmt_depth("yuv420p"), 8);
+        assert_eq!(pix_fmt_depth("yuv420p10le"), 10);
+        assert_eq!(pix_fmt_depth("yuv444p12le"), 12);
     }
 
     #[test]
