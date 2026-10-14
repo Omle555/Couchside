@@ -66,6 +66,11 @@ impl Ffmpeg {
         }
     }
 
+    /// Where the working ffmpeg executable is.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Grabs keyframes from `req.start` to `req.start + req.window` of `file`, at least
     /// `min_gap` apart. Frame times are positions in the whole video.
     pub async fn grab_frames(

@@ -1,6 +1,6 @@
 # Transcoding plan
 
-Status: **agreed** (2026-10-14). Nothing here is built yet. LJ's answers to the open questions
+Status: **agreed** (2026-10-14). Phases 0 and 1 are built. LJ's answers to the open questions
 are recorded at the end.
 
 ## 1. Where we are today

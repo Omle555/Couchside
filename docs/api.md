@@ -78,6 +78,51 @@ Pages look like `{ items, total, limit, offset }`. `limit` defaults to 100 (max 
 | GET | `/shows/{id}/image/poster\|backdrop` | user | Cached show artwork |
 | GET | `/subtitles/{id}` | user | External subtitle converted to WebVTT |
 
+### Playback and repackaged streams
+
+`POST /items/{id}/playback` decides how the item plays on the calling device and, when the
+file must be repackaged, starts a stream. Body:
+
+```json
+{
+  "profile": {
+    "containers": ["mp4", "webm", "mkv"],
+    "video": ["h264", "hevc", "hevc_main10", "vp9", "av1"],
+    "audio": ["aac", "mp3", "opus", "flac"],
+    "max_height": 1080,
+    "tv_mode": false
+  },
+  "device_id": "random id kept by the browser",
+  "start_seconds": 0,
+  "direct_failed": false
+}
+```
+
+Format names: containers `mp4`, `webm`, `mkv`; video `h264`, `h264_high10`, `hevc`,
+`hevc_main10`, `vp9`, `av1`; audio `aac`, `mp3`, `opus`, `vorbis`, `flac`, `ac3`, `eac3`, `dts`,
+`truehd`. Unknown names are ignored. `tv_mode` limits the device to H.264 and AAC/MP3 in MP4 at
+up to 1080p. `direct_failed: true` means the original file was tried and didn't play.
+
+Response: `{ "mode", "url", "session_id", "reason", "needs_video_conversion" }`. `mode` is
+`direct_play` (load `url`, the original file), `remux` (video and audio copied) or
+`audio_convert` (video copied, audio converted to stereo AAC); the last two return an HLS
+playlist `url` and a `session_id`. When the video itself would need converting (not available
+yet), `mode` is `direct_play` and `needs_video_conversion` is true. `reason` explains, in plain
+words, why the file isn't played as it is. 503 `busy` when `[transcode] max_remuxes` streams are
+already running. A new stream from the same `device_id` ends that device's previous one.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/items/{id}/playback` | user | Pick the playback mode and start a stream if needed (above) |
+| GET | `/transcode/{session}/main.m3u8` | user | HLS playlist (VOD, fragmented MP4 segments) |
+| GET | `/transcode/{session}/init.mp4` | user | Init segment |
+| GET | `/transcode/{session}/seg/{n}.m4s` | user | Media segment `n`; waits for ffmpeg, restarting it there after a seek |
+| POST | `/transcode/{session}/stop` | user | End the stream (also sent with `navigator.sendBeacon`); 204 |
+
+Streams belong to the user who started them. ffmpeg stops after 2 minutes without requests,
+and a stream ends (its temporary files deleted) after 30 minutes, when the viewer leaves, or
+when the server stops.
+
 ## Users
 
 | Method | Path | Auth | Description |

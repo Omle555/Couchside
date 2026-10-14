@@ -777,6 +777,93 @@ function fmtClock(seconds) {
   return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
 }
 
+// ----- Playback: what this device can play, and repackaged (HLS) streams -----
+
+const PLAY_MODES = { direct_play: 'Direct play', remux: 'Repackaging', audio_convert: 'Converting audio' };
+
+const isTv = () => /Tizen|SMART-TV|SmartTV|Web0S/i.test(navigator.userAgent);
+
+// A random id this browser keeps, so a new stream from it replaces its previous one.
+function deviceId() {
+  const make = () => Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  try {
+    let id = localStorage.getItem('couchside.device');
+    if (!id) { id = make(); localStorage.setItem('couchside.device', id); }
+    return id;
+  } catch (e) {
+    return make();
+  }
+}
+
+// TV mode (only H.264/AAC in MP4, up to 1080p): on by default on TVs, whose format
+// answers can't be fully trusted. `couchside.tvMode` = '1' / '0' overrides it.
+function tvMode() {
+  try {
+    const saved = localStorage.getItem('couchside.tvMode');
+    if (saved === '1' || saved === '0') return saved === '1';
+  } catch (e) { /* storage blocked: use the default */ }
+  return isTv();
+}
+
+// The formats this browser says it plays, in the names the server uses.
+function playbackProfile(video) {
+  const can = type => {
+    try { if (window.MediaSource && MediaSource.isTypeSupported(type)) return true; } catch (e) { /* ignore */ }
+    return video.canPlayType(type) !== '';
+  };
+  const pick = table => Object.keys(table).filter(name => can(table[name]));
+  const containers = ['mp4'];
+  if (can('video/webm')) containers.push('webm');
+  // Chrome plays most MKV files when they're served as WebM (Couchside does); TVs don't.
+  if (can('video/x-matroska') || (containers.includes('webm') && !isTv())) containers.push('mkv');
+  return {
+    containers,
+    video: pick({
+      h264: 'video/mp4; codecs="avc1.640028"',
+      h264_high10: 'video/mp4; codecs="avc1.6E0028"',
+      hevc: 'video/mp4; codecs="hvc1.1.6.L120.90"',
+      hevc_main10: 'video/mp4; codecs="hvc1.2.4.L153.90"',
+      vp9: 'video/webm; codecs="vp9"',
+      av1: 'video/mp4; codecs="av01.0.08M.08"',
+    }),
+    audio: pick({
+      aac: 'audio/mp4; codecs="mp4a.40.2"',
+      mp3: 'audio/mpeg',
+      opus: 'audio/webm; codecs="opus"',
+      vorbis: 'audio/webm; codecs="vorbis"',
+      flac: 'audio/mp4; codecs="flac"',
+      ac3: 'audio/mp4; codecs="ac-3"',
+      eac3: 'audio/mp4; codecs="ec-3"',
+      dts: 'audio/mp4; codecs="dtsc"',
+      truehd: 'audio/mp4; codecs="mlpa"',
+    }),
+    tv_mode: tvMode(),
+  };
+}
+
+let hlsScript = null;
+function loadHlsJs() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!hlsScript) {
+    hlsScript = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/vendor/hls.min.js';
+      s.onload = () => resolve(window.Hls);
+      s.onerror = () => { hlsScript = null; reject(new Error('Could not load the stream player.')); };
+      document.head.appendChild(s);
+    });
+  }
+  return hlsScript;
+}
+
+function stopStream(sessionId) {
+  if (!sessionId) return;
+  const url = `/api/v1/transcode/${sessionId}/stop`;
+  if (!(navigator.sendBeacon && navigator.sendBeacon(url))) {
+    fetch(url, { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => {});
+  }
+}
+
 async function playerPage(id, params) {
   const d = await api(`/items/${id}`);
   const item = d.item;
@@ -787,14 +874,83 @@ async function playerPage(id, params) {
     `<track kind="subtitles" src="/api/v1/subtitles/${s.id}" label="${esc(s.label)}"${isLang(s.language) ? ` srclang="${esc(s.language)}"` : ''}>`).join('');
   const title = item.kind === 'episode' && d.show_title ? `${d.show_title} — ${epCode(item)} ${item.title}` : item.title;
   app.innerHTML = `<div class="player" id="player">
-      <div class="player-bar"><a class="btn small" href="#/item/${item.id}">← Back</a><span class="ptitle">${esc(title)}</span></div>
-      <video id="video" controls autoplay playsinline preload="metadata" src="/api/v1/items/${item.id}/stream">${tracks}</video>
+      <div class="player-bar"><a class="btn small" href="#/item/${item.id}">← Back</a><span class="ptitle">${esc(title)}</span><span class="pmode" id="pmode" hidden></span></div>
+      <video id="video" controls autoplay playsinline preload="metadata">${tracks}</video>
     </div>`;
   const player = app.querySelector('#player');
   const video = app.querySelector('#video');
+  const modeLabel = app.querySelector('#pmode');
   const resumeAt = params.get('resume') && item.progress && !item.progress.played ? item.progress.position_seconds : 0;
 
-  video.addEventListener('loadedmetadata', () => { if (resumeAt > 0) video.currentTime = resumeAt; }, { once: true });
+  let hls = null;
+  let sessionId = null;
+  let plan = null;
+  let triedFallback = false;
+  let closed = false;
+
+  const showError = (heading, message) => {
+    if (closed || player.querySelector('.play-error')) return;
+    player.insertAdjacentHTML('beforeend', `<div class="play-error"><h3>${esc(heading)}</h3>
+      <p>${esc(message)}</p><a class="btn" href="#/item/${item.id}">Back</a></div>`);
+  };
+  const formatText = () => `${item.video_codec || 'unknown'} / ${item.audio_codec || 'unknown'} in ${d.file_name.split('.').pop()}`;
+  const cantPlay = () => {
+    if (plan && plan.needs_video_conversion) {
+      showError('This video needs converting', `${plan.reason || ''} Couchside can't convert video yet (that's coming in a later update), so open the file in a player like VLC for now.`);
+    } else {
+      showError("Can't play this file", `The format (${formatText()}) didn't play here.${plan && plan.reason ? ` ${plan.reason}` : ''} Open the file in a player like VLC for now.`);
+    }
+  };
+
+  const detach = () => {
+    if (hls) { hls.destroy(); hls = null; }
+    stopStream(sessionId);
+    sessionId = null;
+  };
+  const seekOnLoad = startAt => {
+    if (startAt > 0) video.addEventListener('loadedmetadata', () => { video.currentTime = startAt; }, { once: true });
+  };
+
+  const attach = async (next, startAt) => {
+    detach();
+    plan = next;
+    sessionId = next.session_id || null;
+    modeLabel.hidden = false;
+    modeLabel.textContent = PLAY_MODES[next.mode] || '';
+    modeLabel.title = next.reason || '';
+    if (next.mode === 'direct_play') {
+      video.src = next.url;
+      seekOnLoad(startAt);
+      return;
+    }
+    const nativeHls = video.canPlayType('application/vnd.apple.mpegurl') !== '';
+    const Hls = isTv() && nativeHls ? null : await loadHlsJs().catch(() => null);
+    if (closed) { stopStream(sessionId); return; }
+    if (Hls && Hls.isSupported()) {
+      hls = new Hls({ startPosition: startAt > 0 ? startAt : -1, maxBufferLength: 30 });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) { detach(); cantPlay(); }
+      });
+      hls.loadSource(next.url);
+      hls.attachMedia(video);
+    } else if (nativeHls) {
+      video.src = next.url;
+      seekOnLoad(startAt);
+    } else {
+      cantPlay();
+    }
+  };
+
+  const request = directFailed => api(`/items/${item.id}/playback`, {
+    method: 'POST',
+    body: {
+      profile: playbackProfile(video),
+      device_id: deviceId(),
+      start_seconds: directFailed ? (video.currentTime || resumeAt) : resumeAt,
+      direct_failed: directFailed,
+    },
+  });
+
   let lastSave = Date.now();
   const save = played => {
     if (!video.currentTime && !played) return;
@@ -807,12 +963,25 @@ async function playerPage(id, params) {
   });
   video.addEventListener('pause', () => save());
   video.addEventListener('ended', () => save(true));
-  video.addEventListener('error', () => {
-    player.insertAdjacentHTML('beforeend', `<div class="play-error"><h3>Can't play this file in the browser</h3>
-      <p>The video format (${esc(item.video_codec || 'unknown')} / ${esc(item.audio_codec || 'unknown')} in ${esc(d.file_name.split('.').pop())}) isn't supported by this browser.
-      Couchside doesn't convert video yet, so open the original file in a player like VLC for now.</p>
-      <a class="btn" href="#/item/${item.id}">Back</a></div>`);
+  video.addEventListener('error', async () => {
+    if (closed || hls) return; // hls.js reports its own errors
+    if (plan && plan.mode === 'direct_play' && !plan.needs_video_conversion && !triedFallback) {
+      // The original file didn't play after all: ask for a repackaged stream instead.
+      triedFallback = true;
+      const at = video.currentTime || resumeAt;
+      try {
+        const next = await request(true);
+        if (next.mode !== 'direct_play') { await attach(next, at); return; }
+        plan = next;
+      } catch (e) {
+        showError("Can't play this file", e.message);
+        return;
+      }
+    }
+    cantPlay();
   });
+  const onPageHide = () => stopStream(sessionId);
+  window.addEventListener('pagehide', onPageHide);
 
   let idleTimer;
   const wake = () => {
@@ -826,13 +995,24 @@ async function playerPage(id, params) {
   document.addEventListener('keydown', onKey);
 
   cleanup = () => {
+    closed = true;
     save();
     clearTimeout(idleTimer);
     document.removeEventListener('keydown', onKey);
+    window.removeEventListener('pagehide', onPageHide);
     video.pause();
+    detach();
     video.removeAttribute('src');
     video.load(); // stops the download
   };
+
+  try {
+    await attach(await request(false), resumeAt);
+  } catch (e) {
+    if (e.status === 503) { showError('Too many videos playing', e.message); return; }
+    // Couldn't ask the server how to play it: try the original file.
+    await attach({ mode: 'direct_play', url: `/api/v1/items/${item.id}/stream` }, resumeAt);
+  }
 }
 
 async function searchPage(params) {

@@ -21,6 +21,8 @@ pub enum ApiError {
     NotFound,
     /// 409 with a message for the user.
     Conflict(String),
+    /// 503 with a message for the user (e.g. too many streams).
+    Unavailable(String),
     /// 500: details are logged, never sent.
     Internal(String),
 }
@@ -53,6 +55,7 @@ impl IntoResponse for ApiError {
             ),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", "Not found.".into()),
             Self::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg),
+            Self::Unavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, "busy", msg),
             Self::Internal(detail) => {
                 tracing::error!(error = %detail, "request failed");
                 (
@@ -128,5 +131,19 @@ pub(super) fn capitalize(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect::<String>() + ".",
         None => String::new(),
+    }
+}
+
+impl From<couchside_transcode::TranscodeError> for ApiError {
+    fn from(err: couchside_transcode::TranscodeError) -> Self {
+        use couchside_transcode::TranscodeError as E;
+        match err {
+            E::NotFound => Self::NotFound,
+            E::Busy(_) => Self::Unavailable(format!(
+                "{} Try again when one has finished.",
+                capitalize(&err.to_string())
+            )),
+            other => Self::internal(other),
+        }
     }
 }

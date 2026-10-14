@@ -10,7 +10,12 @@ rust-version.workspace = true
 couchside-core = { workspace = true }
 couchside-db = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

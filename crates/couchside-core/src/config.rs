@@ -229,7 +229,8 @@ watch_folders = true
 allow_file_renames = false
 
 [transcode]
-# Converting files your browser or TV can't play (not switched on yet).
+# Converting files your browser or TV can't play. Full video conversion (hardware,
+# max_transcodes) arrives in a later update; repackaging and sound conversion work now.
 # "nvenc" = use an NVIDIA graphics card (falls back to the processor), "none" = processor only.
 hardware = "none"
 max_transcodes = 2

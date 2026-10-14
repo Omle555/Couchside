@@ -8,6 +8,7 @@ mod dto;
 mod error;
 mod libraries;
 mod metadata;
+mod playback;
 mod setup;
 mod stream;
 mod users;
@@ -80,6 +81,11 @@ pub fn router(state: AppState) -> Router {
         .route("/search", get(browse::search))
         .route("/items/{id}", get(browse::item))
         .route("/items/{id}/stream", get(stream::stream_item))
+        .route("/items/{id}/playback", post(playback::start))
+        .route("/transcode/{session}/main.m3u8", get(playback::playlist))
+        .route("/transcode/{session}/init.mp4", get(playback::init_segment))
+        .route("/transcode/{session}/seg/{file}", get(playback::segment))
+        .route("/transcode/{session}/stop", post(playback::stop))
         .route("/items/{id}/image/{kind}", get(stream::item_image))
         .route("/items/{id}/progress", put(browse::set_progress))
         .route("/subtitles/{id}", get(stream::subtitle))

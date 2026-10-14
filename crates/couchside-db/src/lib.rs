@@ -3,6 +3,7 @@
 //! All queries are parameterized. Schema changes live in `migrations/` and are
 //! applied automatically on startup, after a backup of the existing database.
 
+mod keyframes;
 mod libraries;
 mod media;
 mod models;

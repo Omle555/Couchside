@@ -168,6 +168,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
 .player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 16px; padding: 14px 20px; background: linear-gradient(to bottom, rgba(0,0,0,.75), transparent); transition: opacity .3s; z-index: 2; }
 .player.idle .player-bar { opacity: 0; }
 .player-bar .ptitle { font-weight: 600; }
+.player-bar .pmode { margin-left: auto; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; white-space: nowrap; }
 .player .play-error { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; text-align: center; z-index: 3; }
 
 /* ---------- Settings ---------- */

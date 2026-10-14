@@ -75,7 +75,7 @@ pub(super) async fn safe_media_path(state: &AppState, stored: &str) -> Result<Pa
 }
 
 /// Serves a file honouring `Range` requests so players can seek.
-async fn serve_file(
+pub(super) async fn serve_file(
     path: &std::path::Path,
     headers: &HeaderMap,
     content_type: &'static str,

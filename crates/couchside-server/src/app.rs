@@ -13,7 +13,7 @@ use couchside_db::Db;
 use couchside_db::{DbResult, ALLOW_FILE_RENAMES, METADATA_LANGUAGE, TMDB_API_KEY};
 use couchside_library::{Ffmpeg, Ffprobe};
 use couchside_metadata::Tmdb;
-use couchside_transcode::clear_temp_dir;
+use couchside_transcode::{clear_temp_dir, ManagerSettings, TranscodeManager};
 use std::future::{Future, IntoFuture};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -44,6 +44,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// "Scan video for title" in the Identify dialog.
     pub title_scanner: Arc<TitleScanner>,
+    /// Repackaged / converted streams (HLS).
+    pub transcoder: Arc<TranscodeManager>,
+    /// ffprobe, used to read keyframe times before repackaging.
+    pub ffprobe: Option<Ffprobe>,
 }
 
 /// Where the TMDB key in use came from.
@@ -194,6 +198,7 @@ pub async fn run(
     };
     startup_page.stop().await;
     let db = state.db.clone();
+    let transcoder = Arc::clone(&state.transcoder);
     let router = api::router(state);
     let listener = tokio::net::TcpListener::from_std(socket)
         .context("could not set up the network listener")?;
@@ -235,6 +240,7 @@ pub async fn run(
         } => tracing::info!("closing remaining connections"),
     }
 
+    transcoder.shutdown().await;
     db.close().await;
     tracing::info!("stopped");
     Ok(())
@@ -270,7 +276,13 @@ async fn start_services(
     };
 
     progress.begin(BootStep::Library);
-    let manager = LibraryManager::new(db.clone(), ffprobe, tmdb);
+    let transcoder = TranscodeManager::new(ManagerSettings {
+        ffmpeg: ffmpeg.as_ref().map(|f| f.path().to_path_buf()),
+        temp_dir: config.transcode_dir(),
+        max_remuxes: config.transcode.max_remuxes,
+        temp_max_bytes: config.transcode.temp_max_gb.saturating_mul(1 << 30),
+    });
+    let manager = LibraryManager::new(db.clone(), ffprobe.clone(), tmdb);
     manager.spawn_schedule(config.scan.interval_minutes, config.scan.scan_on_startup);
     if config.scan.watch_folders {
         manager.spawn_watcher(std::time::Duration::from_secs(
@@ -285,6 +297,8 @@ async fn start_services(
         setup_lock: Arc::new(tokio::sync::Mutex::new(())),
         config: Arc::new(config.clone()),
         title_scanner: Arc::new(TitleScanner::new(ffmpeg)),
+        transcoder,
+        ffprobe,
     })
 }
 

@@ -7,6 +7,15 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 ## What's new
 
 **2026-10-14**
+- **Movies with AC3 or DTS sound now play in the browser and on the TV.** When a device can't
+  play a file's sound or file type, Couchside repackages it on the fly: the picture is copied
+  untouched (no quality loss, almost no CPU) and only the sound is converted to stereo. A small
+  label on the player says "Direct play", "Repackaging" or "Converting audio". Seeking works
+  normally. If a file still won't play directly, the player switches to the repackaged version
+  by itself. FFmpeg stops when you leave the player, when Couchside stops, and even if Couchside
+  crashes. The first play of a repackaged movie takes a moment longer while Couchside reads
+  where its keyframes are. Up to 4 of these streams can run at once (`[transcode] max_remuxes`).
+  Full video conversion (AVI, WMV, 10-bit, 4K) is next.
 - Transcoding, step 1 of 4 (behind the scenes, nothing to see yet): Couchside now notes every
   video, audio and subtitle track inside each file, which it needs to decide later whether a
   file can play as-is or must be converted. After updating, it re-reads every file once in the
@@ -56,8 +65,8 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 - **Hands off your files**: Couchside never moves, changes or deletes your media files, and only
   renames them, or moves images and subtitles aside, through Clean up, or sends a movie to the Recycle Bin with **Delete**, when you allow it
 
-Not yet included: transcoding (files play as-is, so the browser must support the format), a tray icon,
-and apps for TVs/phones. See [CHANGELOG.md](CHANGELOG.md).
+Not yet included: full video conversion (AVI/WMV, 10-bit H.264, HEVC on devices without HEVC, 4K
+down to 1080p), a tray icon, and apps for TVs/phones. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Building from source
 
@@ -184,13 +193,19 @@ Everything lives in `C:\ProgramData\Couchside\` (change it with `data_dir` in `c
 | `couchside.db`        | Libraries, users, watch progress (SQLite)           |
 | `images\`            | Cached posters and backdrops                        |
 | `logs\`              | Daily log files (14 days kept)                      |
+| `transcodes\`        | Temporary pieces of repackaged streams (deleted automatically) |
 
 ## Browser support
 
-Couchside streams the original file. Chrome and Edge play MP4 and most MKV files with H.264 video and
-AAC/MP3/Opus audio. HEVC (H.265) plays in Edge on Windows with the HEVC Video Extensions installed.
-Files with DTS/AC3 audio or AVI/WMV containers usually need transcoding, which is planned for a
-later version.
+Couchside plays the original file whenever the device can. Before playing, the player tells
+Couchside which formats the device supports. If only the sound or the file type is the problem (an
+MKV with AC3, E-AC3, DTS or TrueHD sound, or an MKV on a TV), Couchside repackages the file on the
+fly with FFmpeg: the picture is copied untouched and the sound is converted to stereo AAC. The
+label in the corner of the player says which is happening. Seeking works as usual. On Samsung and
+other smart-TV browsers Couchside sticks to H.264/AAC MP4, which every TV plays.
+
+Files whose picture itself can't be played (AVI/WMV, 10-bit H.264, HEVC on devices without HEVC)
+need full video conversion, which is coming in a later update.
 
 ## Project layout
 

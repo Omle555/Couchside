@@ -9,6 +9,9 @@ const INDEX_HTML: &str = include_str!("web/index.html");
 const APP_JS: &str = include_str!("web/app.js");
 const APP_CSS: &str = include_str!("web/app.css");
 const FAVICON_SVG: &str = include_str!("web/favicon.svg");
+/// hls.js 1.7.3 (Apache-2.0, see `web/vendor/hls.js-LICENSE`), loaded only when a stream
+/// has to be repackaged and the browser can't play HLS by itself.
+const HLS_JS: &str = include_str!("web/vendor/hls.min.js");
 
 fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
     (
@@ -31,6 +34,10 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route(
             "/app.css",
             get(|| async { asset("text/css; charset=utf-8", APP_CSS) }),
+        )
+        .route(
+            "/vendor/hls.min.js",
+            get(|| async { asset("text/javascript; charset=utf-8", HLS_JS) }),
         )
         .route(
             "/favicon.svg",

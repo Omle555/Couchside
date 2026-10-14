@@ -13,6 +13,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the new location and `solidfin.db` is renamed to `couchside.db`. Users must sign in again.
 
 ### Added
+- Repackaged playback (transcoding phase 1): `POST /items/{id}/playback` takes the device's
+  supported formats and picks direct play, remux (copy into fragmented MP4) or audio convert
+  (video copied, audio to stereo AAC). Repackaged streams are HLS with a full VOD playlist built
+  from the file's keyframe times (read once with ffprobe, cached in the new `keyframes` table);
+  ffmpeg cuts a segment at every keyframe, runs at up to 4x real time and is restarted at the
+  requested segment after a seek. Copied HEVC is tagged `hvc1`. Streams end when the viewer
+  leaves, after 30 idle minutes or at shutdown (ffmpeg stops after 2 idle minutes); their folders
+  are deleted, and idle streams are ended if `temp_max_gb` is exceeded. ffmpeg runs in a Windows
+  job object, so it is killed even if Couchside crashes. Limit: `[transcode] max_remuxes`
+- Web player: sends a format profile (TV mode on smart-TV browsers), plays HLS with bundled
+  hls.js 1.7.3 (Apache-2.0, `/vendor/hls.min.js`, loaded only when needed) or natively on TVs,
+  shows a Direct play / Repackaging / Converting audio label, and falls back to a repackaged
+  stream when the original file fails to play
 - Groundwork for transcoding ([plan](docs/transcoding-plan.md), [ADR 0002](docs/adr/0002-transcoding.md)):
   ffprobe now records every video, audio and subtitle stream (codec, profile, bit depth, HDR,
   channels, language, default/forced) and the overall bitrate in a new `media_streams` table;
