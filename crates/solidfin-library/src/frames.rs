@@ -85,8 +85,7 @@ impl Ffmpeg {
             // Input seeking: fast, and output timestamps restart near zero.
             cmd.args(["-ss", &format!("{:.3}", req.start.as_secs_f64())]);
         }
-        cmd
-            .args(["-t", &req.window.as_secs().to_string()])
+        cmd.args(["-t", &req.window.as_secs().to_string()])
             .arg("-i")
             .arg(file)
             .args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf", &filter])

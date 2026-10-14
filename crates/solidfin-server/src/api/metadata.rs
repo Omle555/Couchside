@@ -5,10 +5,10 @@ use super::dto::{
     CandidateDto, IdentifyQuery, IdentifyRequest, MetadataSettingsDto, MetadataSettingsRequest,
     TitleScanDto, TitleScanFrameDto, TitleScanQuery, TmdbImageQuery,
 };
-use crate::title_scan::ScanPart;
 use super::stream::safe_media_path;
 use super::ApiError;
 use crate::app::{effective_metadata_settings, AppState, KeySource};
+use crate::title_scan::ScanPart;
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
