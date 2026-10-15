@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Planned
+- Embedded subtitle tracks
+- System tray icon and Windows installer (MSI)
+
+## [0.1.0] - 2026-10-15
+
+First public release. It bundles the first build from 2026-10-11 (listed last) and everything
+added since.
+
 ### Changed
 - Home spotlight halved in height (33vh, 320-380px) with a smaller title and a two-line
   description (hidden on phones); removed the top-bar greeting.
@@ -103,13 +112,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - After Identify, the movie page and lists show the new match's poster and backdrop straight
   away instead of the browser's cached artwork from the old match
 
-### Planned
-- Embedded subtitle tracks
-- System tray icon and Windows installer (MSI)
-
-## [0.1.0] - 2026-10-11
-
-### Added
+### First build (2026-10-11)
 - Movie and TV libraries with incremental scanning (local drives, mapped drives, UNC shares)
 - File-name parser for common movie and episode naming styles
 - Optional TMDB metadata with a local image cache

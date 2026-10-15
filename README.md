@@ -6,6 +6,10 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-15: version 0.1.0 released**
+- Couchside 0.1.0 is the first release on GitHub. Download `Couchside-v0.1.0-windows-x64.zip`
+  from the Releases page, unzip it and run `couchside.exe`. It includes everything listed below.
+
 **2026-10-15 (later)**
 - The home page spotlight is half as tall, so your rows show up sooner, and the "Your evening,
   curated." greeting has been removed from the top bar.
