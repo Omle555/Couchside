@@ -2,31 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0a0c">
   <title>Couchside</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     /* Splash styles live here so it paints before app.css and app.js arrive. */
-    html, body { margin: 0; background: #0e1015; }
+    html, body { margin: 0; background: #0a0a0c; }
     .splash {
       position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: #0e1015; color: #e8eaf0;
+      display: -webkit-box; display: -webkit-flex; display: flex;
+      -webkit-box-orient: vertical; -webkit-flex-direction: column; flex-direction: column;
+      -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+      -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
+      background: #0a0a0c; color: #f2f2f4;
       font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
       opacity: 1; -webkit-transition: opacity .35s ease; transition: opacity .35s ease;
     }
     .splash.done { opacity: 0; pointer-events: none; }
-    .splash-mark { display: flex; align-items: center; margin-bottom: 28px; }
-    .splash-mark svg { width: 44px; height: 44px; margin-right: 14px; }
-    .splash-name { font-size: 30px; font-weight: 700; letter-spacing: .3px; }
+    .splash-mark { display: -webkit-box; display: -webkit-flex; display: flex; -webkit-box-align: center; -webkit-align-items: center; align-items: center; margin-bottom: 28px; }
+    .splash-mark img { width: 48px; height: 48px; margin-right: 14px; }
+    .splash-name { font-family: Georgia, "Times New Roman", serif; font-size: 32px; letter-spacing: .3px; }
     .splash-track {
       position: relative; overflow: hidden;
-      width: 240px; height: 3px; border-radius: 3px; background: #20242d;
+      width: 240px; height: 3px; border-radius: 3px; background: #1f1f24;
     }
     .splash-bar {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 3px;
-      background: #7c9cff;
+      background: #e5383b;
       -webkit-transform-origin: 0 50%; transform-origin: 0 50%;
       -webkit-transform: scaleX(0); transform: scaleX(0);
       -webkit-transition: -webkit-transform .4s ease; transition: transform .4s ease;
@@ -38,7 +42,7 @@
     }
     @-webkit-keyframes splash-slide { from { left: -35%; } to { left: 100%; } }
     @keyframes splash-slide { from { left: -35%; } to { left: 100%; } }
-    .splash-status { margin-top: 14px; min-height: 20px; font-size: 14px; color: #9aa1b2; }
+    .splash-status { margin-top: 14px; min-height: 20px; font-size: 14px; color: #9a9aa3; }
     @media (prefers-reduced-motion: reduce) {
       .splash, .splash-bar { -webkit-transition: none; transition: none; }
       .splash.indeterminate .splash-bar { width: 100%; left: 0; opacity: .45; -webkit-animation: none; animation: none; }
@@ -49,41 +53,58 @@
 <body>
   <div id="splash" class="splash indeterminate" role="progressbar" aria-label="Loading Couchside" aria-valuemin="0" aria-valuemax="100">
     <div class="splash-mark">
-      <svg viewBox="0 0 64 64" aria-hidden="true">
-        <defs>
-          <linearGradient id="splash-g" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#7c9cff"/>
-            <stop offset="1" stop-color="#4b5fd6"/>
-          </linearGradient>
-        </defs>
-        <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#splash-g)"/>
-        <path d="M26 20 L46 32 L26 44 Z" fill="#fff"/>
-      </svg>
+      <img src="/favicon.svg" alt="">
       <span class="splash-name">Couchside</span>
     </div>
     <div class="splash-track"><div class="splash-bar" id="splash-bar"></div></div>
     <div class="splash-status" id="splash-status" aria-live="polite">Starting…</div>
   </div>
   <div id="scanbar" class="scanbar" role="progressbar" aria-label="Library scan" aria-valuemin="0" aria-valuemax="100" hidden><div class="scanbar-fill"></div></div>
-  <header id="topbar" class="topbar" hidden>
+  <aside id="sidebar" class="sidebar" hidden>
     <a class="brand" href="#/">
-      <img src="/favicon.svg" alt="" width="26" height="26">
+      <img src="/favicon.svg" alt="" width="34" height="34">
       <span>Couchside</span>
     </a>
-    <nav class="nav">
-      <a href="#/" data-nav="home">Home</a>
-      <a href="#/movies" data-nav="movies">Movies</a>
-      <a href="#/shows" data-nav="shows">TV Shows</a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/" data-nav="home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z"/></svg>
+        <span>Home</span>
+      </a>
+      <a href="#/movies" data-nav="movies">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"/></svg>
+        <span>Movies</span>
+      </a>
+      <a href="#/shows" data-nav="shows">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M9 2.5 12 6l3-3.5"/></svg>
+        <span>Series</span>
+      </a>
+      <a href="#/settings" data-nav="settings" class="nav-settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+        <span>Settings</span>
+      </a>
     </nav>
-    <form id="search-form" class="search" role="search">
-      <input id="search-input" type="search" placeholder="Search" aria-label="Search titles" autocomplete="off">
-    </form>
-    <div class="user">
-      <a href="#/settings" data-nav="settings" title="Settings">Settings</a>
-      <button id="logout" class="link" type="button">Sign out</button>
+    <div class="sidebar-foot">
+      <div class="conn" id="conn"><span class="conn-dot"></span><span id="conn-text">Server connected</span></div>
+      <div class="me">
+        <span class="avatar" id="side-avatar" aria-hidden="true"></span>
+        <div class="me-text">
+          <div class="me-name" id="side-name"></div>
+          <button id="logout" class="link" type="button">Sign out</button>
+        </div>
+      </div>
     </div>
-  </header>
-  <main id="app" class="app"></main>
+  </aside>
+  <div class="main" id="main">
+    <header id="topbar" class="topbar" hidden>
+      <div class="greeting" id="greeting">Your evening, curated.</div>
+      <form id="search-form" class="search" role="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="search-input" type="search" placeholder="Search movies and series" aria-label="Search titles" autocomplete="off">
+      </form>
+      <a class="avatar top-avatar" id="top-avatar" href="#/settings" title="Settings"></a>
+    </header>
+    <main id="app" class="app"></main>
+  </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script src="/app.js"></script>
 </body>

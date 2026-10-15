@@ -3,6 +3,8 @@
 
 const app = document.getElementById('app');
 const topbar = document.getElementById('topbar');
+const sidebar = document.getElementById('sidebar');
+const mainCol = document.getElementById('main');
 const PAGE_SIZE = 120;
 
 let me = null;          // signed-in user
@@ -16,13 +18,20 @@ class ApiError extends Error {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch('/api/v1' + path, {
-    method,
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch('/api/v1' + path, {
+      method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    setConnected(false);
+    throw err;
+  }
+  setConnected(res.status < 500);
   if (res.status === 401 && path !== '/auth/login') {
     me = null;
     if (!location.hash.startsWith('#/login')) location.hash = '#/login';
@@ -133,6 +142,31 @@ function showCard(show) {
   </a>`;
 }
 
+// The sidebar's "Server connected" line, updated by every API call.
+function setConnected(ok) {
+  const el = document.getElementById('conn');
+  if (!el || el.classList.contains('off') === !ok) return;
+  el.classList.toggle('off', !ok);
+  document.getElementById('conn-text').textContent = ok ? 'Server connected' : 'Server not responding';
+}
+
+// Shows or hides the sidebar and top bar (hidden on sign-in screens and in the player).
+function setChrome(on) {
+  sidebar.hidden = !on;
+  topbar.hidden = !on;
+  mainCol.classList.toggle('with-sidebar', on);
+}
+
+function renderMe() {
+  const initial = me.username.charAt(0);
+  document.getElementById('side-name').textContent = me.username;
+  document.getElementById('side-avatar').textContent = initial;
+  document.getElementById('top-avatar').textContent = initial;
+  const hour = new Date().getHours();
+  const part = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : 'evening';
+  document.getElementById('greeting').textContent = `Your ${part}, curated.`;
+}
+
 function setActiveNav(name) {
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === name));
 }
@@ -232,7 +266,7 @@ function watchScan() {
 // ---------- Auth screens ----------
 
 function authPage({ title, intro, button, onSubmit, confirm }) {
-  topbar.hidden = true;
+  setChrome(false);
   app.innerHTML = `<form class="auth" autocomplete="on">
     <div class="logo"><img src="/favicon.svg" width="34" height="34" alt="">Couchside</div>
     <p>${esc(intro)}</p>
@@ -288,13 +322,133 @@ function setupPage() {
 
 // ---------- Pages ----------
 
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>',
+  prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>',
+  next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
+};
+
+// Moods for the home page, each a set of TMDB genre names (in English). When the library's
+// genres are in another language and none match, the genres themselves are used as chips.
+const MOODS = [
+  ['Feel-good', ['Comedy', 'Family', 'Animation', 'Music']],
+  ['Edge of your seat', ['Thriller', 'Action', 'Crime']],
+  ['Mind-bending', ['Science Fiction', 'Mystery', 'Fantasy']],
+  ['Heartfelt', ['Drama', 'Romance']],
+  ['Spooky', ['Horror']],
+  ['Epic adventures', ['Adventure', 'War', 'History', 'Western']],
+  ['True stories', ['Documentary']],
+];
+
+// A shuffle that gives the same order all day, so the spotlight doesn't change on every visit.
+function dailyShuffle(list) {
+  const day = new Date().toDateString();
+  let seed = 0;
+  for (let i = 0; i < day.length; i++) seed = (seed * 31 + day.charCodeAt(i)) >>> 0;
+  const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
+}
+
+function playHref(item) {
+  const p = item.progress;
+  return `#/play/${item.id}${p && !p.played && p.position_seconds > 30 ? '?resume=1' : ''}`;
+}
+
+function spotlightHtml(picks) {
+  const slides = picks.map((m, i) => {
+    const meta = [m.year, m.genres.slice(0, 2).join(' / '), fmtRuntime(m.runtime_seconds)]
+      .filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('<span class="sep">·</span>');
+    const badge = resolution(m) === '4K' ? '<span class="qbadge">4K</span>' : '';
+    return `<div class="spot-slide${i === 0 ? ' active' : ''}">
+      <img class="spot-bg" src="${itemImg(m, 'backdrop')}" alt=""${i === 0 ? '' : ' loading="lazy"'} onerror="this.remove()">
+      <div class="spot-body">
+        <div class="spot-label">Tonight's spotlight</div>
+        <h2 class="spot-title${m.title.length > 30 ? ' longer' : m.title.length > 16 ? ' long' : ''}">${esc(m.title)}</h2>
+        <div class="spot-meta">${meta}${badge}</div>
+        ${m.overview ? `<p class="spot-overview">${esc(m.overview)}</p>` : ''}
+        <div class="spot-actions"><a class="btn primary" href="${playHref(m)}">${ICONS.play}Play now</a><a class="btn outline" href="#/item/${m.id}">View details</a></div>
+      </div></div>`;
+  }).join('');
+  const pager = picks.length > 1 ? `<div class="spot-pager">
+      <span class="spot-count"><b id="spot-num">01</b> / ${pad(picks.length)}</span>
+      <button class="round-btn" type="button" id="spot-prev" aria-label="Previous">${ICONS.prev}</button>
+      <button class="round-btn" type="button" id="spot-next" aria-label="Next">${ICONS.next}</button>
+    </div>` : '';
+  return `<section class="spotlight" id="spotlight" aria-roledescription="carousel" aria-label="Tonight's spotlight">${slides}${pager}</section>`;
+}
+
+// Moves the spotlight every 9 seconds, except while the pointer or focus is on it.
+function startSpotlight() {
+  const root = app.querySelector('#spotlight');
+  const slides = root ? root.querySelectorAll('.spot-slide') : [];
+  if (slides.length < 2) return () => {};
+  let current = 0;
+  let paused = false;
+  const show = i => {
+    current = (i + slides.length) % slides.length;
+    slides.forEach((s, n) => s.classList.toggle('active', n === current));
+    root.querySelector('#spot-num').textContent = pad(current + 1);
+  };
+  root.querySelector('#spot-prev').addEventListener('click', () => show(current - 1));
+  root.querySelector('#spot-next').addEventListener('click', () => show(current + 1));
+  root.addEventListener('mouseenter', () => { paused = true; });
+  root.addEventListener('mouseleave', () => { paused = false; });
+  root.addEventListener('focusin', () => { paused = true; });
+  root.addEventListener('focusout', () => { paused = false; });
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timer = still ? null : setInterval(() => { if (!paused && !document.hidden) show(current + 1); }, 9000);
+  return () => clearInterval(timer);
+}
+
+function continueCard(item) {
+  const src = item.has_backdrop ? itemImg(item, 'backdrop')
+    : (item.show_id ? showImg(item.show_id, 'backdrop') : itemImg(item, 'poster'));
+  const p = item.progress;
+  const left = p && item.runtime_seconds ? item.runtime_seconds - p.position_seconds : 0;
+  const sub = [item.kind === 'episode' ? epCode(item) : item.year, left >= 60 ? `${fmtRuntime(left)} left` : '']
+    .filter(Boolean).join(' · ');
+  const pct = progressPercent(item);
+  return `<div class="cw-card">
+    <a class="cw-art" href="#/item/${item.id}">${artHtml(src, true, item.title)}<div class="cw-shade"></div>
+      <div class="cw-text"><div class="cw-title" title="${esc(item.title)}">${esc(item.title)}</div>
+        <div class="cw-line"><div class="cw-bar"><span style="width:${pct.toFixed(1)}%"></span></div><span class="cw-sub">${esc(sub)}</span></div></div></a>
+    <a class="cw-play" href="#/play/${item.id}?resume=1" aria-label="Resume ${esc(item.title)}">${ICONS.play}</a>
+  </div>`;
+}
+
+// The mood chips that have movies in this library, as [label, movies] pairs.
+function moodGroups(movies) {
+  const has = (m, names) => m.genres.some(g => names.indexOf(g) !== -1);
+  const groups = MOODS.map(([label, names]) => [label, movies.filter(m => has(m, names))]).filter(g => g[1].length);
+  if (groups.length) return groups;
+  const counts = {};
+  movies.forEach(m => m.genres.forEach(g => { counts[g] = (counts[g] || 0) + 1; }));
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 7)
+    .map(g => [g, movies.filter(m => m.genres.indexOf(g) !== -1)]);
+}
+
 async function homePage() {
   setActiveNav('home');
   document.title = 'Couchside';
-  const home = await api('/home');
+  const results = await Promise.all([api('/home'), api('/movies?sort=added&limit=500')]);
+  const home = results[0];
+  const movies = dailyShuffle(results[1].items);
   const sections = [];
+  const picks = movies.filter(m => m.has_backdrop && m.overview).slice(0, 4);
+  if (picks.length) sections.push(spotlightHtml(picks));
   if (home.continue_watching.length) {
-    sections.push(`<h2 class="row-title">Continue watching</h2><div class="row wide">${home.continue_watching.map(i => episodeCard(i)).join('')}</div>`);
+    sections.push(`<div class="row-head"><h2 class="row-title">Pick up where you left off</h2></div><div class="row cw">${home.continue_watching.map(continueCard).join('')}</div>`);
+  }
+  const moods = moodGroups(movies);
+  if (moods.length) {
+    sections.push(`<div class="row-head mood-head"><h2 class="row-title">Made for your mood</h2>
+      <div class="mood-chips" id="moods">${moods.map((g, i) => `<button type="button" class="mood-chip${i === 0 ? ' active' : ''}" data-i="${i}">${esc(g[0])}</button>`).join('')}</div></div>
+      <div class="row mood" id="mood-row"></div>`);
   }
   if (home.recent_movies.length) {
     sections.push(`<h2 class="row-title">Recently added movies</h2><div class="row">${home.recent_movies.map(movieCard).join('')}</div>`);
@@ -310,6 +464,24 @@ async function homePage() {
     return;
   }
   app.innerHTML = sections.join('');
+  // With a spotlight, the top bar floats over it.
+  document.body.classList.toggle('has-spotlight', picks.length > 0);
+  cleanup = startSpotlight();
+
+  const chips = app.querySelector('#moods');
+  if (chips) {
+    const row = app.querySelector('#mood-row');
+    const pick = i => {
+      chips.querySelectorAll('.mood-chip').forEach(c => c.classList.toggle('active', Number(c.dataset.i) === i));
+      row.innerHTML = moods[i][1].slice(0, 30).map(movieCard).join('');
+      row.scrollLeft = 0;
+    };
+    chips.addEventListener('click', e => {
+      const chip = e.target.closest('.mood-chip');
+      if (chip) pick(Number(chip.dataset.i));
+    });
+    pick(0);
+  }
 }
 
 async function moviesPage(params) {
@@ -330,11 +502,11 @@ async function moviesPage(params) {
 
 async function showsPage() {
   setActiveNav('shows');
-  document.title = 'TV Shows · Couchside';
-  app.innerHTML = `<div class="toolbar"><h1>TV Shows<span class="count" id="count"></span></h1></div>
+  document.title = 'Series · Couchside';
+  app.innerHTML = `<div class="toolbar"><h1>Series<span class="count" id="count"></span></h1></div>
     <div class="grid" id="grid"></div><div class="more" id="more"></div>`;
   await pagedGrid(offset => api(`/shows?limit=${PAGE_SIZE}&offset=${offset}`), showCard,
-    'No TV shows yet. Add a TV library in Settings.');
+    'No series yet. Add a TV library in Settings.');
 }
 
 async function pagedGrid(fetchPage, render, emptyText) {
@@ -885,7 +1057,7 @@ function stopStream(sessionId) {
 async function playerPage(id, params) {
   const d = await api(`/items/${id}`);
   const item = d.item;
-  topbar.hidden = true;
+  setChrome(false);
   document.title = `${item.title} · Couchside`;
   const isLang = l => /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(l || '');
   const tracks = d.subtitles.map(s =>
@@ -1057,7 +1229,7 @@ async function searchPage(params) {
   document.title = `Search · Couchside`;
   const res = await api(`/search?q=${encodeURIComponent(q)}`);
   const parts = [];
-  if (res.shows.length) parts.push(`<h2 class="row-title">TV Shows</h2><div class="grid">${res.shows.map(showCard).join('')}</div>`);
+  if (res.shows.length) parts.push(`<h2 class="row-title">Series</h2><div class="grid">${res.shows.map(showCard).join('')}</div>`);
   if (res.movies.length) parts.push(`<h2 class="row-title">Movies</h2><div class="grid">${res.movies.map(movieCard).join('')}</div>`);
   app.innerHTML = `<h1>Results for “${esc(q)}”</h1>${parts.join('') || '<div class="empty">No matches.</div>'}`;
 }
@@ -1115,7 +1287,7 @@ async function settingsPage() {
 
   app.innerHTML = `<h1>Settings</h1>${adminPanels}
     <section class="panel"><h2>Your account</h2>
-      <p class="hint">Signed in as <b>${esc(me.username)}</b>${me.is_admin ? ' (administrator)' : ''}.</p>
+      <p class="hint">Signed in as <b>${esc(me.username)}</b>${me.is_admin ? ' (administrator)' : ''}. <button class="link inline" type="button" id="settings-logout">Sign out</button></p>
       <form id="pw-form" class="form-row users">
         <div><label for="pw1">New password</label><input id="pw1" type="password" autocomplete="new-password" required></div>
         <div><label for="pw2">Confirm</label><input id="pw2" type="password" autocomplete="new-password" required></div>
@@ -1126,6 +1298,7 @@ async function settingsPage() {
     </section>
     <p class="hint">Couchside ${esc(serverInfo ? serverInfo.version : '')}</p>`;
 
+  app.querySelector('#settings-logout').addEventListener('click', signOut);
   app.querySelector('#pw-form').addEventListener('submit', async e => {
     e.preventDefault();
     const err = app.querySelector('#pw-err');
@@ -1363,7 +1536,9 @@ async function route() {
     return;
   }
 
-  topbar.hidden = false;
+  setChrome(true);
+  renderMe();
+  document.body.classList.remove('has-spotlight');
   window.scrollTo(0, 0);
   for (const [re, handler] of routes) {
     const m = path.match(re);
@@ -1386,11 +1561,13 @@ document.getElementById('search-form').addEventListener('submit', e => {
   if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
 });
 
-document.getElementById('logout').addEventListener('click', async () => {
+async function signOut() {
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   me = null;
   location.hash = '#/login';
-});
+}
+
+document.getElementById('logout').addEventListener('click', signOut);
 
 window.addEventListener('hashchange', route);
 route();

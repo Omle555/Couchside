@@ -6,6 +6,17 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-15**
+- **New look for the web app.** A near-black and red theme with a sidebar (Home, Movies, Series,
+  Settings), a "Server connected" light, and a greeting bar with search. The logo is now a red couch.
+- **New home page:** a full-width "Tonight's spotlight" of up to four of your movies (play or view
+  details, with a 01 / 04 pager), a "Pick up where you left off" row with progress bars and resume
+  buttons, and "Made for your mood" chips (Feel-good, Edge of your seat, Mind-bending...) that
+  filter your movies by genre. The recently added rows are still below.
+- On phones the sidebar becomes a tab bar along the bottom, and Sign out is also in Settings.
+- Layout fixes for 2019-2022 Samsung TVs, whose browsers lacked some newer CSS (poster boxes and
+  spacing now work there too).
+
 **2026-10-14 (later)**
 - **Every video now plays: Couchside converts the picture itself when it has to.** AVI, WMV,
   MPEG-2, 10-bit H.264, HEVC on devices without HEVC and 4K on smaller screens are converted to

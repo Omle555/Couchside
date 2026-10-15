@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Changed
+- Redesigned the web UI: dark theme with a red accent and serif headings, a left sidebar (bottom
+  tab bar on phones) with a live server-connection indicator, and a top bar with greeting, search
+  and avatar. The home page has a spotlight carousel (movies with backdrops, same picks all day),
+  a "Pick up where you left off" row and genre-based mood chips over a poster row. "TV Shows" is
+  now "Series" in the UI. New red couch logo. The CSS no longer uses flexbox `gap`,
+  `aspect-ratio` or `inset`, so layouts work on older TV browsers (Tizen 2019-2022).
 - Renamed the project from Solidfin to Couchside: crates (`couchside-*`), `couchside.exe`, the
   Windows service and firewall rule, the web UI, the session cookie and the default data folder
   (`%ProgramData%\Couchside`). On start, an existing `%ProgramData%\Solidfin` folder is moved to
