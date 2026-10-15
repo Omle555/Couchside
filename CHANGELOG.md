@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Changed
+- Home spotlight halved in height (33vh, 320-380px) with a smaller title and a two-line
+  description (hidden on phones); removed the top-bar greeting.
 - Redesigned the web UI: dark theme with a red accent and serif headings, a left sidebar (bottom
   tab bar on phones) with a live server-connection indicator, and a top bar with greeting, search
   and avatar. The home page has a spotlight carousel (movies with backdrops, same picks all day),

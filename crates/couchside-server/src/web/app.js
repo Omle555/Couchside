@@ -162,9 +162,6 @@ function renderMe() {
   document.getElementById('side-name').textContent = me.username;
   document.getElementById('side-avatar').textContent = initial;
   document.getElementById('top-avatar').textContent = initial;
-  const hour = new Date().getHours();
-  const part = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : 'evening';
-  document.getElementById('greeting').textContent = `Your ${part}, curated.`;
 }
 
 function setActiveNav(name) {

@@ -6,6 +6,10 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-15 (later)**
+- The home page spotlight is half as tall, so your rows show up sooner, and the "Your evening,
+  curated." greeting has been removed from the top bar.
+
 **2026-10-15**
 - **New look for the web app.** A near-black and red theme with a sidebar (Home, Movies, Series,
   Settings), a "Server connected" light, and a greeting bar with search. The logo is now a red couch.

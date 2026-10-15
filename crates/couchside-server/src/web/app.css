@@ -88,7 +88,6 @@ a:focus:not(:focus-visible), button:focus:not(:focus-visible) { box-shadow: none
   display: flex; align-items: center;
   padding: 26px var(--gutter) 20px;
 }
-.greeting { font-family: var(--serif); font-size: 26px; letter-spacing: .2px; white-space: nowrap; margin-right: 24px; }
 .search {
   position: relative; flex: 1; max-width: 420px; margin-left: auto; margin-right: 18px;
 }
@@ -168,7 +167,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
 .spotlight {
   position: relative; overflow: hidden;
   margin: 0 calc(-1 * var(--gutter));
-  height: 66vh; min-height: 460px; max-height: 720px;
+  height: 33vh; min-height: 320px; max-height: 380px;
   background: var(--surface); border-bottom: 1px solid #1d1d23;
 }
 .spot-slide {
@@ -185,25 +184,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
     linear-gradient(to top, rgba(10, 10, 12, .8) 0%, rgba(10, 10, 12, 0) 40%),
     linear-gradient(to bottom, rgba(10, 10, 12, .55) 0%, rgba(10, 10, 12, 0) 22%);
 }
-.spot-body { position: absolute; left: var(--gutter); right: var(--gutter); bottom: 56px; z-index: 1; max-width: 760px; }
-.spot-label { color: var(--accent); font-size: 13px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; margin-bottom: 14px; }
+.spot-body { position: absolute; left: var(--gutter); right: var(--gutter); bottom: 30px; z-index: 1; max-width: 760px; }
+.spot-label { color: var(--accent); font-size: 13px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; margin-bottom: 10px; }
 .spot-title {
-  margin: 0 0 18px; font-weight: 200; font-size: 76px; line-height: 1;
+  margin: 0 0 12px; font-weight: 200; font-size: 52px; line-height: 1;
   letter-spacing: .14em; text-transform: uppercase;
   text-shadow: 0 2px 24px rgba(0, 0, 0, .4);
 }
-.spot-title.long { font-size: 56px; letter-spacing: .1em; }
-.spot-title.longer { font-size: 42px; letter-spacing: .07em; }
-.spot-meta { display: flex; flex-wrap: wrap; align-items: center; color: #d4d4da; font-size: 15px; margin-bottom: 14px; }
+.spot-title.long { font-size: 42px; letter-spacing: .1em; }
+.spot-title.longer { font-size: 34px; letter-spacing: .07em; }
+.spot-meta { display: flex; flex-wrap: wrap; align-items: center; color: #d4d4da; font-size: 15px; margin-bottom: 8px; }
 .spot-meta > span { margin: 0 12px 6px 0; }
 .spot-meta .sep { color: #6c6c75; }
 .qbadge { font-size: 11px; font-weight: 700; letter-spacing: .06em; padding: 2px 7px; border: 1px solid rgba(255, 255, 255, .55); border-radius: 4px; }
 .spot-overview {
-  margin: 0 0 26px; max-width: 560px; color: #d6d6dc; font-family: var(--serif); font-size: 18px; line-height: 1.5;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  margin: 0 0 16px; max-width: 560px; color: #d6d6dc; font-family: var(--serif); font-size: 16px; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .spot-actions > .btn { margin: 0 12px 8px 0; padding: 13px 26px; font-size: 15px; }
-.spot-pager { position: absolute; right: var(--gutter); bottom: 48px; z-index: 2; display: flex; align-items: center; }
+.spot-pager { position: absolute; right: var(--gutter); bottom: 30px; z-index: 2; display: flex; align-items: center; }
 .spot-count { -webkit-box-ordinal-group: 2; order: 1; font-size: 14px; letter-spacing: .08em; color: #8e8e97; margin: 0 14px; }
 .spot-count b { color: #fff; font-weight: 600; }
 #spot-next { -webkit-box-ordinal-group: 3; order: 2; }
@@ -444,9 +443,9 @@ button.link.inline { padding: 0; color: var(--accent); font-size: inherit; }
   .conn-dot { margin-right: 0; }
   .me { justify-content: center; padding: 12px 0 0; }
   .me .avatar { margin-right: 0; }
-  .spot-title { font-size: 56px; }
-  .spot-title.long { font-size: 46px; }
-  .spot-title.longer { font-size: 36px; }
+  .spot-title { font-size: 46px; }
+  .spot-title.long { font-size: 38px; }
+  .spot-title.longer { font-size: 30px; }
 }
 
 /* Phones: the sidebar becomes a tab bar along the bottom. */
@@ -466,13 +465,13 @@ button.link.inline { padding: 0; color: var(--accent); font-size: inherit; }
   .nav a.active::before { display: none; }
   .main.with-sidebar { margin-left: 0; padding-bottom: 72px; }
   .topbar { flex-wrap: wrap; padding: 16px var(--gutter) 12px; }
-  .greeting { font-size: 21px; flex: 1; margin-right: 12px; }
-  .search { -webkit-box-ordinal-group: 6; order: 5; max-width: none; flex-basis: 100%; margin: 12px 0 0; }
+  .search { max-width: none; margin: 0 12px 0 0; }
   .top-avatar { width: 32px; height: 32px; font-size: 13px; }
   .app { padding: 0 var(--gutter) 40px; }
-  .spotlight { height: 78vh; min-height: 480px; }
+  .spotlight { height: 39vh; min-height: 300px; max-height: 360px; }
   .spot-slide::after { background: linear-gradient(to top, rgba(10, 10, 12, .96) 0%, rgba(10, 10, 12, .6) 50%, rgba(10, 10, 12, .05) 100%); }
-  .spot-body { left: 20px; right: 20px; bottom: 76px; }
+  .spot-body { left: 20px; right: 20px; bottom: 64px; }
+  .spot-overview { display: none; }
   .spot-label { font-size: 11px; margin-bottom: 10px; }
   .spot-title, .spot-title.long { font-size: 32px; letter-spacing: .06em; margin-bottom: 10px; }
   .spot-title.longer { font-size: 25px; letter-spacing: .04em; }
