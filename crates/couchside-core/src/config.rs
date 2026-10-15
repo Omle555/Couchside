@@ -65,6 +65,10 @@ pub struct ServerConfig {
     pub port: u16,
     /// Only answer devices on the local network (private, link-local and loopback addresses).
     pub lan_only: bool,
+    /// Announce Couchside on the local network (mDNS / DNS-SD as `_couchside._tcp`) so apps
+    /// such as Home Assistant can find it. Only takes effect when other devices can connect
+    /// (`bind` is not a loopback address).
+    pub discovery: bool,
 }
 
 impl Default for ServerConfig {
@@ -73,6 +77,7 @@ impl Default for ServerConfig {
             bind: "127.0.0.1".to_string(),
             port: 8096,
             lan_only: true,
+            discovery: true,
         }
     }
 }
@@ -199,6 +204,8 @@ bind = "127.0.0.1"
 port = 8096
 # true = only devices on your home network (and this PC) can connect, even with bind = "0.0.0.0".
 lan_only = true
+# true = announce Couchside on your network so Home Assistant can find it (needs bind = "0.0.0.0").
+discovery = true
 
 [paths]
 # data_dir = 'D:\CouchsideData'

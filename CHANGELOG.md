@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Network discovery: Couchside announces itself as `_couchside._tcp` over mDNS through the
+  Windows DNS-SD API when bound to a non-loopback address (`[server] discovery`, on by default),
+  with TXT entries `version`, `api` and `server`.
+- `GET /api/v1/activity` (admin): library totals, scan state, open converted streams and what is
+  playing now (positions saved in the last 30 seconds).
+- Home Assistant custom integration, kept in its own repository ([couchside-homeassistant](https://github.com/Omle555/couchside-homeassistant)), with zeroconf
+  discovery, an admin sign-in config flow, re-authentication, and sensors for now playing,
+  converting streams, library totals and scans.
+
 ### Planned
 - Embedded subtitle tracks
 - System tray icon and Windows installer (MSI)

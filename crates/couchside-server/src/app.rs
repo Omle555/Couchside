@@ -3,7 +3,7 @@
 use crate::boot::{BootProgress, BootStep};
 use crate::manager::LibraryManager;
 use crate::title_scan::TitleScanner;
-use crate::{api, boot, lan, logging};
+use crate::{api, boot, discovery, lan, logging};
 use anyhow::Context;
 use couchside_core::config::{
     default_config_path, migrate_legacy_data_dir, migrate_legacy_database, DB_FILE,
@@ -215,6 +215,11 @@ pub async fn run(
         }
         println!("  Press Ctrl+C to stop.\n");
     }
+    let discovery = if config.server.discovery {
+        discovery::start_for(bind, config.server.port).await
+    } else {
+        None
+    };
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
@@ -240,6 +245,9 @@ pub async fn run(
         } => tracing::info!("closing remaining connections"),
     }
 
+    if let Some(discovery) = discovery {
+        discovery.stop().await;
+    }
     transcoder.shutdown().await;
     db.close().await;
     tracing::info!("stopped");

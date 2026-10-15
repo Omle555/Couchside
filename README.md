@@ -6,6 +6,16 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-15: Home Assistant can find Couchside**
+- Couchside now announces itself on your home network (mDNS, as `_couchside._tcp`) using the
+  announcer built into Windows, whenever other devices can connect (`bind = "0.0.0.0"`). Turn it off
+  with `discovery = false` under `[server]`.
+- New Home Assistant integration in its own repository, [couchside-homeassistant](https://github.com/Omle555/couchside-homeassistant): once installed in
+  Home Assistant it shows **Discovered: Couchside**, signs in with an admin account and adds sensors
+  for what is playing now, converting streams, movie, show and episode totals, and library scans.
+  See [Home Assistant](#home-assistant).
+- New `GET /api/v1/activity` endpoint (admin) with those totals and what is playing now.
+
 **2026-10-15: version 0.1.0 released**
 - Couchside 0.1.0 is the first release on GitHub. Download `Couchside-v0.1.0-windows-x64.zip`
   from the Releases page, unzip it and run `couchside.exe`. It includes everything listed below.
@@ -203,6 +213,26 @@ Only devices on the same home network can connect: `lan_only = true` (the defaul
 `403 Forbidden` to any address that is not private (10.x, 172.16–31.x, 192.168.x, 169.254.x,
 IPv6 `fc00::/7` and `fe80::/10`) or this PC. Accounts and passwords still apply on top of that.
 Don't forward Couchside's port on your router.
+
+## Home Assistant
+
+With `bind = "0.0.0.0"`, Couchside announces itself on your network so Home Assistant can find it
+(`discovery = true` under `[server]`, the default; it needs Windows 10 version 1809 or later and the
+network profile set to **Private**). To add it to Home Assistant:
+
+1. Install the integration from [couchside-homeassistant](https://github.com/Omle555/couchside-homeassistant), with HACS (add it as a
+   custom repository of type Integration) or by copying its `custom_components/couchside` folder
+   into your Home Assistant configuration.
+2. Restart Home Assistant. **Settings → Devices & services** shows **Discovered: Couchside**. Click
+   **Add** and sign in with a Couchside administrator account. If it isn't discovered, click
+   **Add integration**, search for Couchside and type the PC's address (for example
+   `192.168.1.20`) and port.
+
+You get a **Playing** on/off sensor (handy for dimming the lights), **Now playing** (how many things
+are playing, with the titles and viewers as attributes), **Converting streams**, **Movies**,
+**TV shows**, **Episodes** and **Library scan**. Home Assistant polls every 15 seconds and keeps its
+own Couchside session; if it is signed out it asks you to sign in again. Home Assistant must be on
+the same home network as Couchside.
 
 ## Running as a Windows service
 

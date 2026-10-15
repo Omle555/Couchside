@@ -10,6 +10,9 @@ port = 8096
 # 192.168.x, 169.254.x, IPv6 fc00::/7 and fe80::/10) and this PC. Everyone else gets "403 Forbidden".
 # false = accept any address that can reach the port (not recommended).
 lan_only = true
+# true = announce Couchside on your network (mDNS, as "_couchside._tcp") so Home Assistant and
+# other apps can find it. Only used when other devices can connect (bind is not 127.0.0.1).
+discovery = true
 
 [paths]
 # Where the database, image cache and logs are stored.

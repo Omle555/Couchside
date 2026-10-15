@@ -284,6 +284,11 @@ impl TranscodeManager {
         manager
     }
 
+    /// How many repackaged or converted streams are open.
+    pub fn open_sessions(&self) -> usize {
+        lock(&self.sessions).len()
+    }
+
     /// Whether streams can be repackaged at all (ffmpeg was found).
     pub fn available(&self) -> bool {
         self.settings.ffmpeg.is_some()

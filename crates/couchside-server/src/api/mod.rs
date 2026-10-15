@@ -1,5 +1,6 @@
 //! HTTP API (`/api/v1`) and the embedded web UI.
 
+mod activity;
 mod auth;
 mod browse;
 mod cleanup;
@@ -73,6 +74,7 @@ pub fn router(state: AppState) -> Router {
             get(metadata::title_scan_frame),
         )
         .route("/tmdb/image", get(metadata::tmdb_image))
+        .route("/activity", get(activity::get))
         .route("/home", get(browse::home))
         .route("/movies", get(browse::movies))
         .route("/shows", get(browse::shows))

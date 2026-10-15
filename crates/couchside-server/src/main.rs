@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod boot;
+mod discovery;
 mod lan;
 mod logging;
 mod manager;

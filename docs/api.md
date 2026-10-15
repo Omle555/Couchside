@@ -130,6 +130,16 @@ Streams belong to the user who started them. ffmpeg stops after 2 minutes withou
 and a stream ends (its temporary files deleted) after 30 minutes, when the viewer leaves, or
 when the server stops.
 
+## Activity
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/activity` | admin | `{ server, version, movies, shows, episodes, scanning, converting, now_playing[] }`. `server` is the PC's name (the `server` TXT entry of the network announcement), `converting` counts open repackaged or converted streams, and `now_playing` lists items whose position was saved in the last 30 seconds and that aren't finished, newest first: `{ user, item_id, kind, title, show_title, season, episode, position_seconds, runtime_seconds }` |
+
+With `[server] discovery = true` (the default) and a non-loopback `bind`, Couchside announces itself
+over mDNS as `Couchside on <pc-name>._couchside._tcp.local` with TXT entries `version`,
+`api=/api/v1` and `server=<pc-name>`.
+
 ## Users
 
 | Method | Path | Auth | Description |

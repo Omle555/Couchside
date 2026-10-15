@@ -3,6 +3,7 @@
 //! All queries are parameterized. Schema changes live in `migrations/` and are
 //! applied automatically on startup, after a backup of the existing database.
 
+mod activity;
 mod keyframes;
 mod libraries;
 mod media;
@@ -12,6 +13,7 @@ mod progress;
 mod settings;
 mod users;
 
+pub use activity::{LibraryCounts, NowPlaying};
 pub use media::{
     FileState, ItemMetadata, MovieSort, NewMedia, NewSubtitle, ProbeData, ShowMetadata,
 };

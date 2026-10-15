@@ -48,7 +48,7 @@ pub async fn network_urls(bind: IpAddr, port: u16) -> Vec<String> {
 }
 
 /// This PC's name, which other Windows PCs on the network can usually resolve.
-fn computer_name() -> Option<String> {
+pub fn computer_name() -> Option<String> {
     ["COMPUTERNAME", "HOSTNAME"]
         .iter()
         .find_map(|var| std::env::var(var).ok())
@@ -57,7 +57,7 @@ fn computer_name() -> Option<String> {
 }
 
 /// The address of the interface the OS would use for outgoing traffic (no packets are sent).
-async fn primary_address() -> std::io::Result<IpAddr> {
+pub async fn primary_address() -> std::io::Result<IpAddr> {
     let socket = tokio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
     socket.connect(ROUTE_PROBE).await?;
     Ok(socket.local_addr()?.ip())
