@@ -1,0 +1,24 @@
+[Unit]
+Description=Couchside media server
+Wants=network-online.target avahi-daemon.service
+After=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=couchside
+Group=couchside
+ExecStart=/usr/local/bin/couchside run --config /etc/couchside/config.toml --no-browser
+# Withdraw the network announcement even if Couchside was killed.
+ExecStopPost=+/bin/rm -f /etc/avahi/services/couchside.service
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/couchside /etc/avahi/services
+
+[Install]
+WantedBy=multi-user.target

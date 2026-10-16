@@ -1,6 +1,6 @@
 //! Announces Couchside on the local network with DNS-SD over mDNS (`_couchside._tcp.local`),
-//! so Home Assistant and other apps can find it. Uses the mDNS responder built into Windows
-//! (Windows 10 1809 and later), so nothing else listens on the network.
+//! so Home Assistant and other apps can find it. On Windows it uses the mDNS responder built into
+//! Windows (10 1809 and later); on Linux it hands a service file to Avahi (`avahi-daemon`).
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -13,8 +13,10 @@ pub struct Announcement {
     /// Instance name shown to people, e.g. `Couchside on ljdesktop`.
     pub name: String,
     /// This PC's mDNS host name, e.g. `ljdesktop.local`.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub host: String,
     /// IPv4 address to publish for `host`, if known.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub ip4: Option<Ipv4Addr>,
     /// HTTP port.
     pub port: u16,
@@ -239,12 +241,65 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::Announcement;
+    use super::{avahi, Announcement};
     use std::sync::mpsc::Receiver;
 
-    /// Network discovery uses the Windows mDNS responder; elsewhere it is skipped.
-    pub fn run(_announcement: &Announcement, _stop: &Receiver<()>) {
-        tracing::info!("network discovery is only available on Windows");
+    /// Publishes the service through Avahi's service folder, waits for `stop`, then removes it.
+    pub fn run(announcement: &Announcement, stop: &Receiver<()>) {
+        let path = std::path::Path::new(avahi::SERVICE_FILE);
+        if let Err(err) = std::fs::write(path, avahi::service_xml(announcement)) {
+            tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                "could not announce Couchside on the network (is avahi-daemon installed?)"
+            );
+            return;
+        }
+        tracing::info!(
+            name = %announcement.instance_name(),
+            port = announcement.port,
+            "announced on the local network through Avahi (Home Assistant can discover it)"
+        );
+        let _ = stop.recv();
+        if let Err(err) = std::fs::remove_file(path) {
+            tracing::debug!(error = %err, "could not withdraw the network announcement");
+        }
+    }
+}
+
+/// Avahi service definitions (Linux).
+#[cfg(any(not(windows), test))]
+mod avahi {
+    use super::Announcement;
+
+    /// Avahi publishes every file in this folder and notices changes by itself.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub const SERVICE_FILE: &str = "/etc/avahi/services/couchside.service";
+
+    /// `s` escaped for XML text.
+    fn escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+
+    /// The Avahi service file for `a`.
+    pub fn service_xml(a: &Announcement) -> String {
+        let txt: String = a
+            .txt
+            .iter()
+            .map(|(k, v)| format!("    <txt-record>{}={}</txt-record>\n", escape(k), escape(v)))
+            .collect();
+        format!(
+            "<?xml version=\"1.0\" standalone=\"no\"?>\n\
+             <!DOCTYPE service-group SYSTEM \"avahi-service.dtd\">\n\
+             <!-- Written by Couchside while it runs; removed when it stops. -->\n\
+             <service-group>\n  <name>{}</name>\n  <service>\n    <type>_couchside._tcp</type>\n    \
+             <port>{}</port>\n{txt}  </service>\n</service-group>\n",
+            escape(&a.name),
+            a.port
+        )
     }
 }
 
@@ -261,5 +316,16 @@ mod tests {
         );
         assert_eq!(a.host, "ljdesktop.local");
         assert!(a.txt.iter().any(|(k, v)| k == "api" && v == "/api/v1"));
+    }
+
+    #[test]
+    fn avahi_service_file() {
+        let a = Announcement::for_server("media&tv", None, 8096);
+        let xml = avahi::service_xml(&a);
+        assert!(xml.contains("<name>Couchside on media&amp;tv</name>"));
+        assert!(xml.contains("<type>_couchside._tcp</type>"));
+        assert!(xml.contains("<port>8096</port>"));
+        assert!(xml.contains("<txt-record>api=/api/v1</txt-record>"));
+        assert!(xml.contains("<txt-record>server=media&amp;tv</txt-record>"));
     }
 }

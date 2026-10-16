@@ -47,13 +47,19 @@ pub async fn network_urls(bind: IpAddr, port: u16) -> Vec<String> {
         .collect()
 }
 
-/// This PC's name, which other Windows PCs on the network can usually resolve.
+/// This PC's name, which other Windows PCs on the network can usually resolve. Services on
+/// Linux have no `HOSTNAME` variable, so `/etc/hostname` is read there (once).
 pub fn computer_name() -> Option<String> {
-    ["COMPUTERNAME", "HOSTNAME"]
-        .iter()
-        .find_map(|var| std::env::var(var).ok())
-        .map(|name| name.trim().to_lowercase())
-        .filter(|name| !name.is_empty())
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        ["COMPUTERNAME", "HOSTNAME"]
+            .iter()
+            .find_map(|var| std::env::var(var).ok())
+            .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+            .map(|name| name.trim().to_lowercase())
+            .filter(|name| !name.is_empty())
+    })
+    .clone()
 }
 
 /// The address of the interface the OS would use for outgoing traffic (no packets are sent).

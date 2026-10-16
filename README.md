@@ -6,6 +6,15 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-16: Couchside runs on Proxmox (LXC container)**
+- Couchside now also runs on Linux. One script on your Proxmox host,
+  `deploy/proxmox/couchside-lxc.sh`, creates a Debian 12 container, builds Couchside in it and
+  starts it as a service on boot. Running it again updates Couchside. See
+  [Running on Proxmox](#running-on-proxmox-lxc-container).
+- On Linux, Couchside announces itself through Avahi, so Home Assistant still discovers it, and
+  **Delete** moves a movie into a hidden `.couchside-trash` folder next to it instead of the
+  Windows Recycle Bin.
+
 **2026-10-15: Home Assistant can find Couchside**
 - Couchside now announces itself on your home network (mDNS, as `_couchside._tcp`) using the
   announcer built into Windows, whenever other devices can connect (`bind = "0.0.0.0"`). Turn it off
@@ -246,6 +255,38 @@ From an **Administrator** terminal:
 The service runs as the *Local System* account. It can read local drives, but network shares need
 permission for the computer account. Alternatively, open *Services*, select *Couchside Media Server*
 → *Properties* → *Log On* and choose your own Windows account.
+
+## Running on Proxmox (LXC container)
+
+Couchside can also run in a Linux container on a Proxmox VE host. On the host, as root:
+
+```bash
+git clone https://github.com/Omle555/Couchside
+MEDIA=/mnt/pve/nas/media bash Couchside/deploy/proxmox/couchside-lxc.sh
+```
+
+Set `MEDIA` to the host folder with your movies and shows. It appears read-only inside the
+container as `/media`, so add libraries such as `/media/Movies` in Couchside's Settings. The script
+creates an unprivileged Debian 12 container (4 cores, 4 GB RAM, 16 GB disk, DHCP on `vmbr0`;
+change these with `CORES`, `MEMORY`, `DISK_GB`, `BRIDGE`, `STORAGE` and `CTID`), installs FFmpeg
+and Avahi, builds Couchside (the first build takes a while) and starts it. When it finishes, it
+prints the address to open, for example `http://192.168.1.30:8096`.
+
+- **Update:** `git -C Couchside pull`, then run the script again with `CTID=<your container id>`.
+  Settings, the database and the media mount are kept.
+- **Settings:** `/etc/couchside/config.toml` in the container (it listens on the network with
+  `lan_only = true`). Data and logs live in `/var/lib/couchside`. Restart with
+  `systemctl restart couchside` and follow logs with `journalctl -u couchside -f`.
+- **Network shares:** mount the share on the Proxmox host (for example as a Proxmox storage under
+  `/mnt/pve/`) and point `MEDIA` at it.
+- **Delete** (when file changes are allowed) has no Recycle Bin on Linux: it moves the movie into a
+  hidden `.couchside-trash` folder in the same folder, where you can move it back or delete it for
+  good. With the read-only `/media` mount, Clean up and Delete can't change files at all; leave out
+  `ro=1` (`pct set <id> --mp0 /path,mp=/media`) if you want them to.
+- Hardware video conversion (NVENC) isn't set up in the container, so conversions use the processor.
+
+Couchside on any other Debian or Ubuntu machine installs the same way: run
+`deploy/linux/install.sh` as root from a copy of the repository.
 
 ## Where Couchside keeps its data
 

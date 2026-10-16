@@ -88,11 +88,13 @@ pub async fn run(
         let mut done = Vec::new();
         let mut result = Ok(());
         for path in &paths {
-            if let Err(err) = recycle(path) {
-                result = Err(err);
-                break;
+            match recycle(path) {
+                Ok(to) => done.push((path.clone(), to)),
+                Err(err) => {
+                    result = Err(err);
+                    break;
+                }
             }
-            done.push((path.clone(), PathBuf::from("Recycle Bin")));
         }
         log_moves(&log, id, "deleted", &done);
         (done, result)

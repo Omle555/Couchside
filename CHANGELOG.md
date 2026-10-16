@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Linux support for running in a Proxmox LXC container: `deploy/proxmox/couchside-lxc.sh` creates
+  or updates a Debian 12 container, and `deploy/linux/install.sh` builds Couchside and installs it
+  as the `couchside` systemd service (config in `/etc/couchside`, data in `/var/lib/couchside`).
+- Network discovery on Linux through an Avahi service file, removed again when Couchside stops.
 - Network discovery: Couchside announces itself as `_couchside._tcp` over mDNS through the
   Windows DNS-SD API when bound to a non-loopback address (`[server] discovery`, on by default),
   with TXT entries `version`, `api` and `server`.
@@ -15,6 +19,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Home Assistant custom integration, kept in its own repository ([couchside-homeassistant](https://github.com/Omle555/couchside-homeassistant)), with zeroconf
   discovery, an admin sign-in config flow, re-authentication, and sensors for now playing,
   converting streams, library totals and scans.
+
+### Changed
+- On Linux, Delete moves items into a `.couchside-trash` folder beside them instead of deleting
+  them permanently, and the Delete log records where each one went.
+- The PC name (for discovery and `/activity`) falls back to `/etc/hostname` when no `COMPUTERNAME`
+  or `HOSTNAME` variable is set, as under systemd.
 
 ### Planned
 - Embedded subtitle tracks
