@@ -11,10 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   or updates a Debian 12 container, and `deploy/linux/install.sh` builds Couchside and installs it
   as the `couchside` systemd service (config in `/etc/couchside`, data in `/var/lib/couchside`).
 - Network discovery on Linux through an Avahi service file, removed again when Couchside stops.
-- `deploy/proxmox/container-setup.sh`, run by the Proxmox script: sets a random root password
-  when root has none, creates the first `admin` account with a random password when Couchside has
-  no users, saves both in `/root/couchside-credentials.txt`, and shows Couchside's address on the
-  container console (`/etc/issue`) and after signing in.
+- `deploy/proxmox/container-setup.sh`, run by the Proxmox script: creates the default login
+  `Admin` / `sidecouch` (changeable with `ADMIN_USER` / `ADMIN_PASSWORD`) as a console user with
+  sudo (root gets the same password if it has none) and as the first Couchside administrator, and
+  shows Couchside's address and the default login on the container console (`/etc/issue`).
 - Network discovery: Couchside announces itself as `_couchside._tcp` over mDNS through the
   Windows DNS-SD API when bound to a non-loopback address (`[server] discovery`, on by default),
   with TXT entries `version`, `api` and `server`.

@@ -13,6 +13,7 @@
 #   CORES     CPU cores                          (default: 4)
 #   MEMORY    RAM in MB                          (default: 4096; building needs about 3000)
 #   MEDIA     host folder to show inside as /media, e.g. /mnt/pve/nas/media (default: none)
+#   ADMIN_USER, ADMIN_PASSWORD  login for the console and Couchside (default: Admin / sidecouch)
 #
 # Running it again with the CTID of an existing Couchside container updates Couchside inside it
 # to this copy of the code and keeps its settings, database and media mount.
@@ -92,7 +93,8 @@ say "Building and installing Couchside inside the container (the first build tak
 pct exec "$CTID" -- bash /opt/couchside/src/deploy/linux/install.sh
 
 say "Setting up the console login and the first Couchside account"
-pct exec "$CTID" -- bash /opt/couchside/src/deploy/proxmox/container-setup.sh
+pct exec "$CTID" -- env ADMIN_USER="${ADMIN_USER:-Admin}" ADMIN_PASSWORD="${ADMIN_PASSWORD:-sidecouch}" \
+    bash /opt/couchside/src/deploy/proxmox/container-setup.sh
 
 say "Done. Container $CTID is running Couchside."
 if [ -z "$MEDIA" ]; then

@@ -7,9 +7,9 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 ## What's new
 
 **2026-10-16 (later): easier first start on Proxmox**
-- The Proxmox script now gives the container's `root` login a password, creates the first
-  Couchside `admin` account with a random password, and prints both along with the address.
-  The container's console also shows Couchside's address above the login prompt.
+- The Proxmox script now creates a default login, **Admin / sidecouch**, for both the container's
+  console and Couchside, and prints it along with the address. The container's console also shows
+  Couchside's address and the default login above the login prompt.
 - The Proxmox steps now include installing git on the host, and signing in while the repository
   is private.
 
@@ -282,11 +282,12 @@ container as `/media`, so add libraries such as `/media/Movies` in Couchside's S
 creates an unprivileged Debian 12 container (4 cores, 4 GB RAM, 16 GB disk, DHCP on `vmbr0`;
 change these with `CORES`, `MEMORY`, `DISK_GB`, `BRIDGE`, `STORAGE` and `CTID`), installs FFmpeg
 and Avahi, builds Couchside (the first build takes a while) and starts it. When it finishes, it
-prints the address to open, for example `http://192.168.1.30:8096`, and two new accounts with
-random passwords: `root` for the container's console in Proxmox, and `admin` for signing in to
-Couchside. They are saved in `/root/couchside-credentials.txt` inside the container (shown again
-with `cat` after you sign in), and the console shows Couchside's address above the login prompt.
-Existing passwords and accounts are never changed.
+prints the address to open, for example `http://192.168.1.30:8096`, and the default login,
+**Admin / sidecouch**. It works both on the container's console in Proxmox (`Admin` can use
+`sudo`; `root` gets the same password if it had none) and for signing in to Couchside. The console
+also shows the address and default login above its login prompt. Pick your own with
+`ADMIN_USER=... ADMIN_PASSWORD=...` before the script, or change them later (`passwd` on the
+console, the Users settings in Couchside). Existing passwords and accounts are never changed.
 
 - **Update:** `git -C Couchside pull`, then run the script again with `CTID=<your container id>`.
   Settings, the database and the media mount are kept.
