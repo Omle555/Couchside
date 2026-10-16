@@ -91,8 +91,10 @@ pct exec "$CTID" -- rm -f /opt/couchside/src.tar.gz
 say "Building and installing Couchside inside the container (the first build takes a while)"
 pct exec "$CTID" -- bash /opt/couchside/src/deploy/linux/install.sh
 
-ip="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
-say "Done. Open http://${ip:-<container-ip>}:8096 from a device on your network."
+say "Setting up the console login and the first Couchside account"
+pct exec "$CTID" -- bash /opt/couchside/src/deploy/proxmox/container-setup.sh
+
+say "Done. Container $CTID is running Couchside."
 if [ -z "$MEDIA" ]; then
     echo "    To add your media later: pct set $CTID --mp0 /path/on/host,mp=/media,ro=1 && pct reboot $CTID"
 fi

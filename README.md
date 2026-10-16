@@ -6,6 +6,13 @@ much like Jellyfin or Plex but much smaller: Couchside is a single `couchside.ex
 
 ## What's new
 
+**2026-10-16 (later): easier first start on Proxmox**
+- The Proxmox script now gives the container's `root` login a password, creates the first
+  Couchside `admin` account with a random password, and prints both along with the address.
+  The container's console also shows Couchside's address above the login prompt.
+- The Proxmox steps now include installing git on the host, and signing in while the repository
+  is private.
+
 **2026-10-16: Couchside runs on Proxmox (LXC container)**
 - Couchside now also runs on Linux. One script on your Proxmox host,
   `deploy/proxmox/couchside-lxc.sh`, creates a Debian 12 container, builds Couchside in it and
@@ -261,16 +268,25 @@ permission for the computer account. Alternatively, open *Services*, select *Cou
 Couchside can also run in a Linux container on a Proxmox VE host. On the host, as root:
 
 ```bash
+apt update && apt install -y git
 git clone https://github.com/Omle555/Couchside
 MEDIA=/mnt/pve/nas/media bash Couchside/deploy/proxmox/couchside-lxc.sh
 ```
+
+Proxmox doesn't include git, hence the first line. While the repository is private, `git clone`
+asks for your GitHub username and a personal access token (with read access to its contents) as
+the password.
 
 Set `MEDIA` to the host folder with your movies and shows. It appears read-only inside the
 container as `/media`, so add libraries such as `/media/Movies` in Couchside's Settings. The script
 creates an unprivileged Debian 12 container (4 cores, 4 GB RAM, 16 GB disk, DHCP on `vmbr0`;
 change these with `CORES`, `MEMORY`, `DISK_GB`, `BRIDGE`, `STORAGE` and `CTID`), installs FFmpeg
 and Avahi, builds Couchside (the first build takes a while) and starts it. When it finishes, it
-prints the address to open, for example `http://192.168.1.30:8096`.
+prints the address to open, for example `http://192.168.1.30:8096`, and two new accounts with
+random passwords: `root` for the container's console in Proxmox, and `admin` for signing in to
+Couchside. They are saved in `/root/couchside-credentials.txt` inside the container (shown again
+with `cat` after you sign in), and the console shows Couchside's address above the login prompt.
+Existing passwords and accounts are never changed.
 
 - **Update:** `git -C Couchside pull`, then run the script again with `CTID=<your container id>`.
   Settings, the database and the media mount are kept.
